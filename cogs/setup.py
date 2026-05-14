@@ -1,11 +1,12 @@
 """
-Evony Shield Watch - Auto Setup on Join
-Buttons: Use Existing | Create New → Next Step
+Evony Shield Watch - Server Setup & Channel Configuration
+Auto-starts on join with option to choose existing or create new channels
 """
 import discord
 from discord.ext import commands
 from discord import app_commands
 from database import db
+from utils.embeds import Embeds
 from config import Config
 from datetime import datetime, timedelta
 
@@ -15,31 +16,39 @@ class Setup(commands.Cog):
     
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild):
-        """Auto-start setup when bot joins server"""
-        # Find first channel we can send to
+        """When bot joins a server, send setup message"""
         channel = None
         for ch in guild.text_channels:
             if ch.permissions_for(guild.me).send_messages:
                 channel = ch
                 break
         
-        if not channel:
-            return  # Can't send anywhere
-        
-        # Init DB for this guild
-        await db.set_server_config(guild_id=guild.id)
-        
-        # Send setup message with buttons
+        if channel:
+            await db.set_server_config(guild_id=guild.id)
+            embed = discord.Embed(
+                title="🛡️ Evony Shield Watch Setup",
+                description="Welcome! Let's configure your server.\n\n"
+                           "**Step 1:** Choose your 🫧 bubble channel\n"
+                           "All shield reminders will go here.\n\n"
+                           "Click a button below:",
+                color=0x1abc9c
+            )
+            view = BubbleStepView()
+            await channel.send(embed=embed, view=view)
+    
+    @app_commands.command(name="setup", description="Manual setup wizard")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def slash_setup(self, interaction: discord.Interaction):
+        """Manual trigger if auto-setup was missed"""
+        await db.set_server_config(guild_id=interaction.guild_id)
         embed = discord.Embed(
             title="🛡️ Evony Shield Watch Setup",
-            description="Welcome! Let's configure your server.\n\n"
-                       "**Step 1:** Choose your 🫧 bubble channel\n"
-                       "All shield reminders will go here.\n\n"
+            description="**Step 1:** Choose your 🫧 bubble channel\n\n"
                        "Click a button below:",
             color=0x1abc9c
         )
         view = BubbleStepView()
-        await channel.send(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 # ========== STEP 1: BUBBLE CHANNEL ==========
@@ -50,8 +59,7 @@ class BubbleStepView(discord.ui.View):
     
     @discord.ui.button(label="Use Existing Channel", style=discord.ButtonStyle.secondary, emoji="📋")
     async def use_existing(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Show channel dropdown
-        view = ChannelDropdownView(step="bubble")
+        view = ChannelSelectView(step="bubble")
         await interaction.response.send_message(
             "Select a channel for bubble reminders:",
             view=view,
@@ -63,7 +71,6 @@ class BubbleStepView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
         
-        # Check if already exists
         existing = discord.utils.get(guild.text_channels, name=Config.DEFAULT_BUBBLE_CHANNEL)
         if existing:
             await db.set_server_config(guild_id=guild.id, bubble_channel_id=existing.id)
@@ -74,7 +81,6 @@ class BubbleStepView(discord.ui.View):
             await self._next_step(interaction)
             return
         
-        # Create new
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(send_messages=False),
             guild.me: discord.PermissionOverwrite(send_messages=True)
@@ -117,7 +123,7 @@ class BattlefieldStepView(discord.ui.View):
     
     @discord.ui.button(label="Use Existing Channel", style=discord.ButtonStyle.secondary, emoji="📋")
     async def use_existing(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = ChannelDropdownView(step="battlefield")
+        view = ChannelSelectView(step="battlefield")
         await interaction.response.send_message(
             "Select a channel for battlefield messages:",
             view=view,
@@ -175,7 +181,7 @@ class BattlefieldStepView(discord.ui.View):
 
 # ========== CHANNEL DROPDOWN ==========
 
-class ChannelDropdownView(discord.ui.View):
+class ChannelSelectView(discord.ui.View):
     def __init__(self, step: str):
         super().__init__(timeout=300)
         self.step = step
@@ -194,7 +200,6 @@ class ChannelDropdownView(discord.ui.View):
                 f"✅ Bubble channel set to {channel.mention}",
                 ephemeral=True
             )
-            # Send battlefield step to channel
             embed = discord.Embed(
                 title="Step 2/3: ⚔️ Battlefield Channel",
                 description="Where should event rosters and times go?\n\n"
@@ -210,7 +215,6 @@ class ChannelDropdownView(discord.ui.View):
                 f"✅ Battlefield channel set to {channel.mention}",
                 ephemeral=True
             )
-            # Send event step to channel
             embed = discord.Embed(
                 title="Step 3/3: 🔄 First Event",
                 description="Which event is happening **this Friday**?\n"
@@ -261,25 +265,11 @@ class EventStepView(discord.ui.View):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-# ========== MANUAL SETUP COMMAND (if needed later) ==========
+# ========== STANDALONE COMMANDS ==========
 
 class SetupCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-    
-    @app_commands.command(name="setup", description="Manual setup wizard")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def slash_setup(self, interaction: discord.Interaction):
-        """Manual trigger if auto-setup was missed"""
-        await db.set_server_config(guild_id=interaction.guild_id)
-        embed = discord.Embed(
-            title="🛡️ Evony Shield Watch Setup",
-            description="**Step 1:** Choose your 🫧 bubble channel\n\n"
-                       "Click a button below:",
-            color=0x1abc9c
-        )
-        view = BubbleStepView()
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
     
     @app_commands.command(name="setbubble", description="Change bubble channel")
     @app_commands.checks.has_permissions(administrator=True)
@@ -322,6 +312,20 @@ class SetupCommands(commands.Cog):
     async def slash_setcoordinator(self, interaction: discord.Interaction, role: discord.Role):
         await db.set_server_config(guild_id=interaction.guild_id, event_coordinator_role_id=role.id)
         await interaction.response.send_message(f"✅ Coordinator role: {role.mention}", ephemeral=True)
+    
+    @app_commands.command(name="addeventcoord", description="Give user coordinator role")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def slash_addeventcoord(self, interaction: discord.Interaction, user: discord.Member):
+        config = await db.get_server_config(interaction.guild_id)
+        if not config or not config.get("event_coordinator_role_id"):
+            return await interaction.response.send_message("❌ Set coordinator role first with `/setcoordinator`", ephemeral=True)
+        
+        role = interaction.guild.get_role(config["event_coordinator_role_id"])
+        if not role:
+            return await interaction.response.send_message("❌ Role not found", ephemeral=True)
+        
+        await user.add_roles(role)
+        await interaction.response.send_message(f"✅ {user.mention} is now coordinator", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
