@@ -1,12 +1,11 @@
 """
 =========================================================
  Evony Shield Watch
- Database Layer (UPDATED - Telegram + Roles + Cleanup)
+ Database Layer (FINAL FIXED CONTRACT)
 =========================================================
 """
 
 import aiosqlite
-from datetime import datetime
 
 DB_PATH = "evony_bot.db"
 
@@ -23,9 +22,7 @@ class Database:
     async def init(self):
         async with aiosqlite.connect(self.db_path) as db:
 
-            # -----------------------------
-            # MEMBERS TABLE
-            # -----------------------------
+            # MEMBERS
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS members (
                     user_id INTEGER PRIMARY KEY,
@@ -36,9 +33,7 @@ class Database:
                 )
             """)
 
-            # -----------------------------
-            # TELEGRAM TOKENS
-            # -----------------------------
+            # TELEGRAM LINKS
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS telegram_links (
                     user_id INTEGER,
@@ -47,23 +42,36 @@ class Database:
                 )
             """)
 
-            # -----------------------------
-            # SERVER CONFIG
-            # -----------------------------
+            # SERVER CONFIG (NOW FULLY COMPATIBLE WITH SETUP COG)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS servers (
                     guild_id INTEGER PRIMARY KEY,
-                    current_event TEXT
+
+                    current_event TEXT,
+
+                    bubble_channel_id INTEGER,
+                    battlefield_channel_id INTEGER,
+
+                    event_coordinator_role_id INTEGER,
+
+                    setup_complete INTEGER DEFAULT 0
                 )
             """)
 
-            # -----------------------------
-            # ROLE SYSTEM (WEB DASHBOARD)
-            # -----------------------------
+            # ROLE SYSTEM
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS roles (
                     user_id INTEGER,
                     role TEXT
+                )
+            """)
+
+            # EVENT SCHEDULE TABLE (IMPORTANT FOR ROTATION LOGIC)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS event_schedule (
+                    guild_id INTEGER PRIMARY KEY,
+                    current_event TEXT,
+                    next_event_date TEXT
                 )
             """)
 
@@ -75,6 +83,7 @@ class Database:
 
     async def set_member_contact(self, user_id, **kwargs):
         async with aiosqlite.connect(self.db_path) as db:
+
             await db.execute("""
                 INSERT OR IGNORE INTO members (user_id)
                 VALUES (?)
@@ -89,7 +98,7 @@ class Database:
 
             await db.commit()
 
-    async def delete_user_data(self, user_id):
+    async def delete_member_data(self, user_id):
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("DELETE FROM members WHERE user_id=?", (user_id,))
             await db.execute("DELETE FROM roles WHERE user_id=?", (user_id,))
@@ -140,16 +149,32 @@ class Database:
     # SERVER CONFIG
     # =====================================================
 
-    async def set_server_config(self, guild_id, current_event=None):
+    async def set_server_config(self, guild_id, **kwargs):
         async with aiosqlite.connect(self.db_path) as db:
+
             await db.execute("""
-                INSERT OR IGNORE INTO servers (guild_id, current_event)
-                VALUES (?, ?)
-            """, (guild_id, current_event))
+                INSERT OR IGNORE INTO servers (guild_id)
+                VALUES (?)
+            """, (guild_id,))
+
+            for key, value in kwargs.items():
+                await db.execute(f"""
+                    UPDATE servers
+                    SET {key} = ?
+                    WHERE guild_id = ?
+                """, (value, guild_id))
+
             await db.commit()
 
+    async def get_server_config(self, guild_id):
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("""
+                SELECT * FROM servers WHERE guild_id=?
+            """, (guild_id,))
+            return await cursor.fetchone()
+
     # =====================================================
-    # ROLE SYSTEM (WEB DASHBOARD)
+    # ROLE SYSTEM
     # =====================================================
 
     async def set_role(self, user_id, role):
