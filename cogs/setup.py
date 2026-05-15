@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 # =======================================================
 
 class Setup(commands.Cog):
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
@@ -51,6 +52,9 @@ class Setup(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def slash_setup(self, interaction: discord.Interaction):
 
+        if not interaction.guild:
+            return await interaction.response.send_message("❌ Guild only command.", ephemeral=True)
+
         await db.set_server_config(guild_id=interaction.guild_id)
 
         embed = discord.Embed(
@@ -71,14 +75,11 @@ class Setup(commands.Cog):
 # =======================================================
 
 class BubbleStepView(discord.ui.View):
+
     def __init__(self):
         super().__init__(timeout=300)
 
-    @discord.ui.button(
-        label="Use Existing Channel",
-        style=discord.ButtonStyle.secondary,
-        emoji="📋"
-    )
+    @discord.ui.button(label="Use Existing Channel", style=discord.ButtonStyle.secondary, emoji="📋")
     async def use_existing(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         if not interaction.guild:
@@ -90,11 +91,7 @@ class BubbleStepView(discord.ui.View):
             ephemeral=True
         )
 
-    @discord.ui.button(
-        label="Create Bubble Channel",
-        style=discord.ButtonStyle.primary,
-        emoji="🫧"
-    )
+    @discord.ui.button(label="Create Bubble Channel", style=discord.ButtonStyle.primary, emoji="🫧")
     async def create_new(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         await interaction.response.defer(ephemeral=True)
@@ -114,11 +111,7 @@ class BubbleStepView(discord.ui.View):
                 bubble_channel_id=existing.id
             )
 
-            await interaction.followup.send(
-                f"✅ Using {existing.mention}",
-                ephemeral=True
-            )
-
+            await interaction.followup.send(f"✅ Using {existing.mention}", ephemeral=True)
             await self._next_step(interaction)
             return
 
@@ -139,14 +132,13 @@ class BubbleStepView(discord.ui.View):
             bubble_channel_id=channel.id
         )
 
-        await interaction.followup.send(
-            f"✅ Created {channel.mention}",
-            ephemeral=True
-        )
-
+        await interaction.followup.send(f"✅ Created {channel.mention}", ephemeral=True)
         await self._next_step(interaction)
 
     async def _next_step(self, interaction: discord.Interaction):
+
+        if not interaction.guild:
+            return
 
         embed = discord.Embed(
             title="Step 2/3: ⚔️ Battlefield Channel",
@@ -162,14 +154,11 @@ class BubbleStepView(discord.ui.View):
 # =======================================================
 
 class BattlefieldStepView(discord.ui.View):
+
     def __init__(self):
         super().__init__(timeout=300)
 
-    @discord.ui.button(
-        label="Use Existing Channel",
-        style=discord.ButtonStyle.secondary,
-        emoji="📋"
-    )
+    @discord.ui.button(label="Use Existing Channel", style=discord.ButtonStyle.secondary, emoji="📋")
     async def use_existing(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         await interaction.response.send_message(
@@ -178,11 +167,7 @@ class BattlefieldStepView(discord.ui.View):
             ephemeral=True
         )
 
-    @discord.ui.button(
-        label="Create Battlefield Channel",
-        style=discord.ButtonStyle.primary,
-        emoji="⚔️"
-    )
+    @discord.ui.button(label="Create Battlefield Channel", style=discord.ButtonStyle.primary, emoji="⚔️")
     async def create_new(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         await interaction.response.defer(ephemeral=True)
@@ -202,11 +187,7 @@ class BattlefieldStepView(discord.ui.View):
                 battlefield_channel_id=existing.id
             )
 
-            await interaction.followup.send(
-                f"✅ Using {existing.mention}",
-                ephemeral=True
-            )
-
+            await interaction.followup.send(f"✅ Using {existing.mention}", ephemeral=True)
             await self._next_step(interaction)
             return
 
@@ -227,14 +208,13 @@ class BattlefieldStepView(discord.ui.View):
             battlefield_channel_id=channel.id
         )
 
-        await interaction.followup.send(
-            f"✅ Created {channel.mention}",
-            ephemeral=True
-        )
-
+        await interaction.followup.send(f"✅ Created {channel.mention}", ephemeral=True)
         await self._next_step(interaction)
 
     async def _next_step(self, interaction: discord.Interaction):
+
+        if not interaction.guild:
+            return
 
         embed = discord.Embed(
             title="Step 3/3: 🔄 First Event",
@@ -246,15 +226,17 @@ class BattlefieldStepView(discord.ui.View):
 
 
 # =======================================================
-# CHANNEL SELECT (FIXED SAFE VERSION)
+# CHANNEL SELECT (STABLE VERSION)
 # =======================================================
 
 class ChannelSelectView(discord.ui.View):
+
     def __init__(self, step: str):
         super().__init__(timeout=300)
         self.step = step
 
         self.add_item(ChannelSelect(step))
+
 
 class ChannelSelect(discord.ui.ChannelSelect):
 
@@ -263,6 +245,9 @@ class ChannelSelect(discord.ui.ChannelSelect):
         self.step = step
 
     async def callback(self, interaction: discord.Interaction):
+
+        if not self.values:
+            return await interaction.response.send_message("❌ No channel selected.", ephemeral=True)
 
         channel = self.values[0]
 
@@ -289,6 +274,7 @@ class ChannelSelect(discord.ui.ChannelSelect):
 # =======================================================
 
 class EventStepView(discord.ui.View):
+
     def __init__(self):
         super().__init__(timeout=300)
 
@@ -331,17 +317,14 @@ class EventStepView(discord.ui.View):
 
 
 # =======================================================
-# EXTRA COMMANDS COG (PLACEHOLDER SAFE)
+# SETUP ENTRY
 # =======================================================
 
 class SetupCommands(commands.Cog):
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-
-# =======================================================
-# SETUP ENTRY
-# =======================================================
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Setup(bot))
