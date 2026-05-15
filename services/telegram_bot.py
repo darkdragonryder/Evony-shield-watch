@@ -1,12 +1,16 @@
 """
 =========================================================
  Telegram Bot Service (Polling Mode)
- Clean Runner Layer - Evony Shield Watch
+ Clean Stable Runner - Evony Shield Watch
 =========================================================
 """
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+)
 
 from config import Config
 from services.telegram_service import TelegramService
@@ -17,7 +21,7 @@ class TelegramBotService:
     def __init__(self):
 
         # =====================================================
-        # TELEGRAM APPLICATION
+        # APPLICATION SETUP
         # =====================================================
         self.app = (
             Application.builder()
@@ -27,13 +31,15 @@ class TelegramBotService:
 
         self.bridge = TelegramService()
 
+        # Handlers
         self.app.add_handler(CommandHandler("start", self.start))
 
+        # State tracking (VERY IMPORTANT FOR VM STABILITY)
         self._running = False
-        self._started = False
+        self._task = None
 
     # =====================================================
-    # /START HANDLER
+    # START COMMAND (/start)
     # =====================================================
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -48,7 +54,7 @@ class TelegramBotService:
         telegram_id = str(user.id)
         username = user.username or user.first_name
 
-        token = context.args[0] if context.args and len(context.args) > 0 else None
+        token = context.args[0] if context.args else None
 
         if not token:
             await update.message.reply_text(
@@ -72,64 +78,61 @@ class TelegramBotService:
             )
 
     # =====================================================
-    # START BOT (SAFE MODE FOR DISCORD INTEGRATION)
+    # START BOT (SAFE VM-PROOF VERSION)
     # =====================================================
     async def start_async(self):
 
-        if self._started:
+        if self._running:
+            print("⚠️ Telegram already running - ignoring duplicate start")
             return
 
-        self._started = True
         self._running = True
 
         print("\n=================================================")
         print("📱 STARTING TELEGRAM BOT")
         print("=================================================\n")
 
-        await self.app.initialize()
-
-        # Prevent double start crash
-        if not self.app.running:
+        try:
+            # SAFE INIT FLOW (PTB v20+ correct order)
+            await self.app.initialize()
             await self.app.start()
 
-        if self.app.updater:
-            await self.app.updater.start_polling()
+            # Polling runs as background task safely
+            self._task = await self.app.updater.start_polling()
 
-        print("✅ Telegram bot running")
+            print("✅ Telegram bot running")
+
+        except Exception as e:
+            self._running = False
+            print(f"❌ Telegram failed to start: {e}")
 
     # =====================================================
-    # STOP BOT (SAFE SHUTDOWN)
+    # STOP BOT (SAFE CLEAN SHUTDOWN)
     # =====================================================
     async def stop_async(self):
 
         if not self._running:
             return
 
-        print("🛑 Stopping Telegram bot...")
+        print("\n🛑 Stopping Telegram bot...")
 
         try:
             if self.app.updater:
                 await self.app.updater.stop()
-        except Exception:
-            pass
 
-        try:
             await self.app.stop()
-        except Exception:
-            pass
-
-        try:
             await self.app.shutdown()
-        except Exception:
-            pass
+
+        except Exception as e:
+            print(f"⚠️ Telegram shutdown warning: {e}")
 
         self._running = False
-        self._started = False
+        self._task = None
 
         print("✅ Telegram bot stopped cleanly")
 
     # =====================================================
-    # SIMPLE RUN (STANDALONE MODE ONLY)
+    # OPTIONAL: BLOCKING RUN (ONLY FOR LOCAL TESTING)
     # =====================================================
     def run(self):
 
