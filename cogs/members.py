@@ -1,8 +1,8 @@
 """
 =========================================================
  Evony Shield Watch
- Member Lifecycle System
- (Join / Leave / Ban / Auto Cleanup / Onboarding)
+ Enterprise Member Lifecycle System
+ (Join / Leave / Ban / Restore / Telegram Ready)
 =========================================================
 """
 
@@ -12,6 +12,7 @@
 
 import discord
 from discord.ext import commands
+from datetime import datetime
 
 from database import db
 from config import Config
@@ -27,7 +28,7 @@ class Members(commands.Cog):
         self.bot = bot
 
     # =====================================================
-    # MEMBER JOIN (ONBOARDING FLOW)
+    # MEMBER JOIN (ONBOARDING + RESTORE CHECK)
     # =====================================================
 
     @commands.Cog.listener()
@@ -36,44 +37,62 @@ class Members(commands.Cog):
         if member.bot:
             return
 
-        # -------------------------------------------------
-        # ensure DB record exists (lightweight init)
-        # -------------------------------------------------
+        # ---------------------------------------------
+        # ensure or restore DB record
+        # ---------------------------------------------
 
-        await db.set_member_contact(member.id)
+        existing = await db.get_member_contact(member.id)
 
-        # -------------------------------------------------
-        # send onboarding DM
-        # -------------------------------------------------
+        if existing:
+            # restore returning user
+            await db.set_member_contact(
+                member.id,
+                status="active",
+                opted_in=1,
+                last_seen=datetime.utcnow().isoformat()
+            )
+        else:
+            # new user profile
+            await db.set_member_contact(
+                member.id,
+                status="active",
+                opted_in=1,
+                timezone="UTC",
+                last_seen=datetime.utcnow().isoformat()
+            )
+
+        # ---------------------------------------------
+        # onboarding DM
+        # ---------------------------------------------
 
         try:
 
             embed = discord.Embed(
                 title="🛡️ Welcome to Evony Shield Watch",
                 description=(
-                    "To get full alerts for SVS / KE / Events:\n\n"
-                    "1️⃣ Set your timezone\n"
-                    "2️⃣ (Optional) Link Telegram for instant alerts\n"
-                    "3️⃣ Choose opt-in preferences"
+                    "To get full SVS / KE / Event alerts:\n\n"
+                    "✔ Set your timezone\n"
+                    "✔ Link Telegram for instant alerts (optional)\n"
+                    "✔ Manage notification preferences anytime"
                 ),
                 color=0x1abc9c
             )
 
             embed.add_field(
-                name="🔗 Link Telegram",
-                value="Run `/linktelegram` in the server",
+                name="🔗 Telegram Linking",
+                value="Use `/linktelegram` in the server (coming in next update)",
                 inline=False
             )
 
             embed.add_field(
-                name="⏰ Set Timezone",
-                value="Run `/settimezone Europe/London` (example)",
+                name="⏰ Timezone Setup",
+                value="`/settimezone Europe/London`",
                 inline=False
             )
 
             embed.add_field(
                 name="🔕 Controls",
-                value="/optout or /optin anytime",
+                value="`/optout` or `/optin` anytime",
                 inline=False
             )
 
@@ -83,7 +102,7 @@ class Members(commands.Cog):
             pass
 
     # =====================================================
-    # MEMBER LEAVE (AUTO CLEANUP)
+    # MEMBER LEAVE (SOFT DELETE - NO DATA LOSS)
     # =====================================================
 
     @commands.Cog.listener()
@@ -92,10 +111,15 @@ class Members(commands.Cog):
         if member.bot:
             return
 
-        await db.delete_user_data(member.id)
+        await db.set_member_contact(
+            member.id,
+            status="left",
+            opted_in=0,
+            left_at=datetime.utcnow().isoformat()
+        )
 
     # =====================================================
-    # MEMBER BAN (SAFE CLEANUP)
+    # MEMBER BAN (FLAGGED - NO DELETE)
     # =====================================================
 
     @commands.Cog.listener()
@@ -104,17 +128,25 @@ class Members(commands.Cog):
         if user.bot:
             return
 
-        await db.delete_user_data(user.id)
+        await db.set_member_contact(
+            user.id,
+            status="banned",
+            opted_in=0,
+            banned_at=datetime.utcnow().isoformat()
+        )
 
     # =====================================================
-    # MEMBER UNBAN (OPTIONAL RE-INIT)
+    # MEMBER UNBAN (RESTORE ELIGIBILITY)
     # =====================================================
 
     @commands.Cog.listener()
     async def on_member_unban(self, guild: discord.Guild, user: discord.User):
 
-        # Recreate minimal record so user can re-link if needed
-        await db.set_member_contact(user.id)
+        await db.set_member_contact(
+            user.id,
+            status="inactive",
+            opted_in=1
+        )
 
 
 # =========================================================
