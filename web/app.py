@@ -1,67 +1,112 @@
 """
 =========================================================
  Evony Shield Watch
- Web Dashboard (FULL UI + API)
+ Web Dashboard (Role-Based Control Panel)
 =========================================================
 """
 
-from fastapi import FastAPI, Request, Depends, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
+# =========================================================
+# IMPORTS
+# =========================================================
 
+from flask import Flask, render_template_string, request, session, redirect
 from database import db
-from services.web_auth import require_role
-from services.role_service import RoleService
-
-app = FastAPI(title="Evony Shield Dashboard")
-templates = Jinja2Templates(directory="web/templates")
-
-roles = RoleService()
+from config import Config
+import asyncio
 
 
-# =====================================================
-# HOME (LOGIN ENTRY)
-# =====================================================
+# =========================================================
+# APP INIT
+# =========================================================
 
-@app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
+app = Flask(__name__)
+app.secret_key = Config.WEB_SECRET_KEY
 
 
-# =====================================================
+# =========================================================
+# ROLE SYSTEM (SIMPLE CORE)
+# =========================================================
+
+def require_role(roles):
+    def wrapper(func):
+        def inner(*args, **kwargs):
+
+            if session.get("role") not in roles:
+                return "❌ Access Denied"
+
+            return func(*args, **kwargs)
+
+        return inner
+    return wrapper
+
+
+# =========================================================
+# LOGIN
+# =========================================================
+
+@app.route("/login", methods=["POST"])
+def login():
+
+    discord_id = int(request.form.get("discord_id"))
+
+    user = asyncio.run(db.get_member_contact(discord_id))
+
+    if not user:
+        return "Invalid User"
+
+    session["user"] = discord_id
+    session["role"] = user["role"]
+
+    return redirect("/")
+
+
+# =========================================================
 # DASHBOARD
-# =====================================================
+# =========================================================
 
-@app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request):
+@app.route("/")
+def dashboard():
 
-    cursor = await db.db.execute("""
-    SELECT discord_id, telegram_username, role
-    FROM members
-    """)
+    if "user" not in session:
+        return """
+        <form method='post' action='/login'>
+            <input name='discord_id' placeholder='Discord ID'>
+            <button>Login</button>
+        </form>
+        """
 
-    members = await cursor.fetchall()
+    role = session.get("role")
 
-    return templates.TemplateResponse(
-        "dashboard.html",
-        {
-            "request": request,
-            "members": members
-        }
+    return render_template_string("""
+    <h1>🛡️ Evony Shield Watch</h1>
+    <h3>Role: {{role}}</h3>
+
+    {% if role in ['owner','admin'] %}
+        <h2>⚙️ Admin Panel</h2>
+        <p>User management, logs, alerts</p>
+    {% endif %}
+
+    {% if role == 'coordinator' %}
+        <h2>📡 Coordinator Panel</h2>
+        <p>View alerts only</p>
+    {% endif %}
+
+    <h2>👤 Member Panel</h2>
+    <p>Telegram status + alerts</p>
+
+    """, role=role)
+
+
+# =========================================================
+# RUN WEB SERVER
+# =========================================================
+
+def run():
+    app.run(
+        host=Config.WEB_HOST,
+        port=Config.WEB_PORT
     )
 
 
-# =====================================================
-# ROLE PANEL (OWNER ONLY)
-# =====================================================
-
-@app.post("/dashboard/set-role")
-async def set_role(
-    discord_id: int = Form(...),
-    role: str = Form(...),
-    auth=Depends(require_role("owner"))
-):
-
-    await roles.set_role(discord_id, role)
-
-    return RedirectResponse("/dashboard", status_code=302)
+if __name__ == "__main__":
+    run()
