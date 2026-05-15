@@ -35,11 +35,13 @@ class Database:
             # USERS TABLE
             await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                discord_id INTEGER PRIMARY KEY,
+                discord_id INTEGER,
+                guild_id INTEGER,
                 telegram_id TEXT,
                 telegram_username TEXT,
                 role TEXT DEFAULT 'member',
-                created_at TEXT
+                created_at TEXT,
+                PRIMARY KEY (discord_id, guild_id)
             )
             """)
 
