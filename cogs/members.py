@@ -1,27 +1,36 @@
 """
 =========================================================
  Evony Shield Watch
- Member Lifecycle System (UPGRADED)
+ Member Lifecycle System
+ (Join / Leave / Ban / Cleanup / Onboarding)
 =========================================================
 """
 
+# =========================================================
+# IMPORTS
+# =========================================================
+
 import discord
 from discord.ext import commands
-
 from database import db
 
 
+# =========================================================
+# MEMBERS COG
+# =========================================================
+
 class Members(commands.Cog):
 
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot):
         self.bot = bot
 
+
     # =====================================================
-    # JOIN
+    # MEMBER JOIN
     # =====================================================
 
     @commands.Cog.listener()
-    async def on_member_join(self, member: discord.Member):
+    async def on_member_join(self, member):
 
         if member.bot:
             return
@@ -33,42 +42,35 @@ class Members(commands.Cog):
                 "🛡️ Welcome to Evony Shield Watch\n\n"
                 "Use /linktelegram to connect alerts."
             )
-        except discord.Forbidden:
+        except:
             pass
 
+
     # =====================================================
-    # LEAVE
+    # MEMBER LEAVE
     # =====================================================
 
     @commands.Cog.listener()
-    async def on_member_remove(self, member: discord.Member):
+    async def on_member_remove(self, member):
 
-        if member.bot:
-            return
+        if not member.bot:
+            await db.delete_user_data(member.id)
 
-        await db.delete_user_data(member.id)
 
     # =====================================================
-    # BAN
+    # MEMBER BAN
     # =====================================================
 
     @commands.Cog.listener()
     async def on_member_ban(self, guild, user):
 
-        if user.bot:
-            return
-
-        await db.delete_user_data(user.id)
-
-    # =====================================================
-    # UNBAN
-    # =====================================================
-
-    @commands.Cog.listener()
-    async def on_member_unban(self, guild, user):
-
-        await db.set_member_contact(user.id)
+        if not user.bot:
+            await db.delete_user_data(user.id)
 
 
-async def setup(bot: commands.Bot):
+# =========================================================
+# SETUP
+# =========================================================
+
+async def setup(bot):
     await bot.add_cog(Members(bot))
