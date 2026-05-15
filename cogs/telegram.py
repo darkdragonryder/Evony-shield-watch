@@ -1,13 +1,9 @@
 """
 =========================================================
  Evony Shield Watch
- Telegram Bridge (Discord ↔ Telegram Linking)
+ Telegram Bridge (Guild Bound)
 =========================================================
 """
-
-# =========================================================
-# IMPORTS
-# =========================================================
 
 import discord
 from discord.ext import commands
@@ -20,22 +16,16 @@ from config import Config
 from database import db
 
 
-# =========================================================
-# DISCORD TELEGRAM BRIDGE
-# =========================================================
-
 class TelegramBridge(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
 
 
-    # =====================================================
-    # LINK TELEGRAM COMMAND
-    # =====================================================
-
     @app_commands.command(name="linktelegram")
     async def linktelegram(self, interaction: discord.Interaction):
+
+        guild_id = interaction.guild.id
 
         token = secrets.token_urlsafe(8)
 
@@ -45,6 +35,7 @@ class TelegramBridge(commands.Cog):
 
         await db.create_telegram_link_token(
             interaction.user.id,
+            guild_id,
             token,
             expiry
         )
@@ -53,43 +44,28 @@ class TelegramBridge(commands.Cog):
 
         url = f"https://t.me/{bot_username}?start={token}"
 
-        await interaction.response.send_message(
-            f"🔗 Telegram Link:\n{url}",
-            ephemeral=True
-        )
+        await interaction.response.send_message(url, ephemeral=True)
 
-
-    # =====================================================
-    # UNLINK TELEGRAM
-    # =====================================================
 
     @app_commands.command(name="unlinktelegram")
     async def unlinktelegram(self, interaction: discord.Interaction):
 
-        await db.set_member_contact(interaction.user.id, None, None)
-
-        await interaction.response.send_message(
-            "❌ Telegram unlinked",
-            ephemeral=True
+        await db.set_member_contact(
+            interaction.user.id,
+            interaction.guild.id,
+            None,
+            None
         )
 
+        await interaction.response.send_message("❌ Unlinked", ephemeral=True)
 
-# =========================================================
-# TELEGRAM SERVICE (LOGIC LAYER)
-# =========================================================
 
 class TelegramService:
 
     async def handle_start_command(self, telegram_id, username, token):
 
-        success = await db.link_telegram_user(token, telegram_id, username)
+        return "✅ Linked" if await db.link_telegram_user(token, telegram_id, username) else "❌ Invalid"
 
-        return "✅ Telegram Linked" if success else "❌ Invalid Token"
-
-
-# =========================================================
-# SETUP
-# =========================================================
 
 async def setup(bot):
     await bot.add_cog(TelegramBridge(bot))
