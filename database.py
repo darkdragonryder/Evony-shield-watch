@@ -1,148 +1,161 @@
 """
 =========================================================
  Evony Shield Watch
- Database Layer (FULL FIXED DROP-IN)
+ Database Layer (Async SQLite Core System)
 =========================================================
 """
 
+# =========================================================
+# IMPORTS
+# =========================================================
+
 import aiosqlite
 from datetime import datetime
+from config import Config
 
 
-DB_PATH = "shield.db"
-
+# =========================================================
+# DATABASE CORE
+# =========================================================
 
 class Database:
 
-    # =====================================================
-    # INIT
-    # =====================================================
+    def __init__(self):
+        self.path = Config.DB_PATH
 
-    async def connect(self):
-        self.db = await aiosqlite.connect(DB_PATH)
-        await self.create_tables()
 
     # =====================================================
-    # TABLES
+    # INITIALISATION
     # =====================================================
 
-    async def create_tables(self):
+    async def init(self):
 
-        await self.db.executescript("""
-        CREATE TABLE IF NOT EXISTS members (
-            discord_id INTEGER PRIMARY KEY,
-            telegram_id TEXT,
-            telegram_username TEXT,
-            role TEXT DEFAULT 'member'
-            timezone TEXT,
-            created_at TEXT
-        );
+        async with aiosqlite.connect(self.path) as db:
 
-        CREATE TABLE IF NOT EXISTS telegram_tokens (
-            token TEXT PRIMARY KEY,
-            discord_id INTEGER,
-            expires_at TEXT
-        );
-        """)
+            # USERS TABLE
+            await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                discord_id INTEGER PRIMARY KEY,
+                telegram_id TEXT,
+                telegram_username TEXT,
+                role TEXT DEFAULT 'member',
+                created_at TEXT
+            )
+            """)
 
-        await self.db.commit()
+            # TELEGRAM TOKENS TABLE
+            await db.execute("""
+            CREATE TABLE IF NOT EXISTS telegram_tokens (
+                discord_id INTEGER,
+                token TEXT,
+                expiry TEXT
+            )
+            """)
+
+            await db.commit()
+
 
     # =====================================================
-    # MEMBER CORE
+    # USER MANAGEMENT
     # =====================================================
 
     async def set_member_contact(self, discord_id, telegram_id=None, telegram_username=None):
 
-        await self.db.execute("""
-        INSERT OR IGNORE INTO members (discord_id, created_at)
-        VALUES (?, ?)
-        """, (discord_id, datetime.utcnow().isoformat()))
+        async with aiosqlite.connect(self.path) as db:
 
-        await self.db.execute("""
-        UPDATE members
-        SET telegram_id = ?, telegram_username = ?
-        WHERE discord_id = ?
-        """, (telegram_id, telegram_username, discord_id))
+            await db.execute("""
+            INSERT OR IGNORE INTO users (discord_id, created_at)
+            VALUES (?, ?)
+            """, (discord_id, datetime.utcnow().isoformat()))
 
-        await self.db.commit()
+            await db.execute("""
+            UPDATE users
+            SET telegram_id = COALESCE(?, telegram_id),
+                telegram_username = COALESCE(?, telegram_username)
+            WHERE discord_id = ?
+            """, (telegram_id, telegram_username, discord_id))
 
-    async def get_member_contact(self, discord_id):
+            await db.commit()
 
-        cursor = await self.db.execute("""
-        SELECT discord_id, telegram_id, telegram_username, timezone
-        FROM members
-        WHERE discord_id = ?
-        """, (discord_id,))
-
-        row = await cursor.fetchone()
-
-        if not row:
-            return None
-
-        return {
-            "discord_id": row[0],
-            "telegram_id": row[1],
-            "telegram_username": row[2],
-            "timezone": row[3]
-        }
 
     async def delete_user_data(self, discord_id):
 
-        await self.db.execute("""
-        DELETE FROM members WHERE discord_id = ?
-        """, (discord_id,))
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("DELETE FROM users WHERE discord_id = ?", (discord_id,))
+            await db.commit()
 
-        await self.db.execute("""
-        DELETE FROM telegram_tokens WHERE discord_id = ?
-        """, (discord_id,))
 
-        await self.db.commit()
+    async def get_member_contact(self, discord_id):
+
+        async with aiosqlite.connect(self.path) as db:
+
+            cur = await db.execute("""
+            SELECT discord_id, telegram_id, telegram_username, role
+            FROM users WHERE discord_id = ?
+            """, (discord_id,))
+
+            row = await cur.fetchone()
+
+            if not row:
+                return None
+
+            return {
+                "discord_id": row[0],
+                "telegram_id": row[1],
+                "telegram_username": row[2],
+                "role": row[3]
+            }
+
 
     # =====================================================
-    # TELEGRAM TOKENS
+    # TELEGRAM LINK SYSTEM
     # =====================================================
 
     async def create_telegram_link_token(self, discord_id, token, expiry):
 
-        await self.db.execute("""
-        INSERT INTO telegram_tokens (token, discord_id, expires_at)
-        VALUES (?, ?, ?)
-        """, (token, discord_id, expiry.isoformat()))
+        async with aiosqlite.connect(self.path) as db:
 
-        await self.db.commit()
+            await db.execute("""
+            INSERT INTO telegram_tokens (discord_id, token, expiry)
+            VALUES (?, ?, ?)
+            """, (discord_id, token, expiry.isoformat()))
 
-    async def get_telegram_token(self, token):
+            await db.commit()
 
-        cursor = await self.db.execute("""
-        SELECT token, discord_id, expires_at
-        FROM telegram_tokens
-        WHERE token = ?
-        """, (token,))
 
-        row = await cursor.fetchone()
+    async def link_telegram_user(self, token, telegram_id, username):
 
-        if not row:
-            return None
+        async with aiosqlite.connect(self.path) as db:
 
-        return {
-            "token": row[0],
-            "discord_id": row[1],
-            "expires_at": datetime.fromisoformat(row[2])
-        }
+            cur = await db.execute("""
+            SELECT discord_id FROM telegram_tokens
+            WHERE token = ?
+            """, (token,))
 
-    async def link_telegram_user(self, token, telegram_id, username, discord_id):
+            row = await cur.fetchone()
 
-        await self.set_member_contact(discord_id, telegram_id, username)
+            if not row:
+                return False
 
-        await self.db.execute("""
-        DELETE FROM telegram_tokens WHERE token = ?
-        """, (token,))
+            discord_id = row[0]
 
-        await self.db.commit()
+            await db.execute("""
+            UPDATE users
+            SET telegram_id = ?, telegram_username = ?
+            WHERE discord_id = ?
+            """, (telegram_id, username, discord_id))
+
+            await db.execute("""
+            DELETE FROM telegram_tokens WHERE token = ?
+            """, (token,))
+
+            await db.commit()
+
+            return True
 
 
 # =========================================================
-# GLOBAL INSTANCE
+# GLOBAL DB INSTANCE
 # =========================================================
 
 db = Database()
