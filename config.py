@@ -1,7 +1,7 @@
 """
 =========================================================
  Evony Shield Watch
- Configuration Layer (Environment + Settings)
+ Configuration Layer (Multi-Server Ready)
 =========================================================
 """
 
@@ -22,14 +22,14 @@ load_dotenv()
 class Config:
 
     # =====================================================
-    # DISCORD SETTINGS
+    # DISCORD
     # =====================================================
 
     DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
 
     # =====================================================
-    # TELEGRAM SETTINGS
+    # TELEGRAM
     # =====================================================
 
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -39,14 +39,14 @@ class Config:
 
 
     # =====================================================
-    # DATABASE SETTINGS
+    # DATABASE
     # =====================================================
 
     DB_PATH = os.getenv("DB_PATH", "data.db")
 
 
     # =====================================================
-    # WEB DASHBOARD SETTINGS
+    # WEB
     # =====================================================
 
     WEB_SECRET_KEY = os.getenv("WEB_SECRET_KEY", "change_me")
