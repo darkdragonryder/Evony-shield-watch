@@ -33,6 +33,7 @@ class Database:
             discord_id INTEGER PRIMARY KEY,
             telegram_id TEXT,
             telegram_username TEXT,
+            role TEXT DEFAULT 'member'
             timezone TEXT,
             created_at TEXT
         );
