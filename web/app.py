@@ -1,91 +1,67 @@
 """
 =========================================================
  Evony Shield Watch
- Web Dashboard API (ROLE-AWARE)
+ Web Dashboard (FULL UI + API)
 =========================================================
 """
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Request, Depends, Form
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+
 from database import db
 from services.web_auth import require_role
+from services.role_service import RoleService
 
-app = FastAPI(title="Evony Shield Watch Dashboard")
+app = FastAPI(title="Evony Shield Dashboard")
+templates = Jinja2Templates(directory="web/templates")
 
-
-# =====================================================
-# HEALTH
-# =====================================================
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+roles = RoleService()
 
 
 # =====================================================
-# GET OWN PROFILE (ANY USER)
+# HOME (LOGIN ENTRY)
 # =====================================================
 
-@app.get("/me")
-async def me():
-    return {"message": "use /member endpoint with auth header"}
-
-
-# =====================================================
-# GET MEMBER (ADMIN+)
-# =====================================================
-
-@app.get("/member/{discord_id}")
-async def get_member(
-    discord_id: int,
-    auth=Depends(require_role("admin"))
-):
-
-    return await db.get_member_contact(discord_id)
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
 
 
 # =====================================================
-# LIST MEMBERS (ADMIN+)
+# DASHBOARD
 # =====================================================
 
-@app.get("/members")
-async def list_members(
-    auth=Depends(require_role("admin"))
-):
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request):
 
     cursor = await db.db.execute("""
-    SELECT discord_id, telegram_id, telegram_username, role
+    SELECT discord_id, telegram_username, role
     FROM members
     """)
 
-    rows = await cursor.fetchall()
+    members = await cursor.fetchall()
 
-    return [
+    return templates.TemplateResponse(
+        "dashboard.html",
         {
-            "discord_id": r[0],
-            "telegram_id": r[1],
-            "telegram_username": r[2],
-            "role": r[3]
+            "request": request,
+            "members": members
         }
-        for r in rows
-    ]
+    )
 
 
 # =====================================================
-# SET ROLE (OWNER ONLY)
+# ROLE PANEL (OWNER ONLY)
 # =====================================================
 
-@app.post("/role/set")
-async def set_role(payload: dict, auth=Depends(require_role("owner"))):
+@app.post("/dashboard/set-role")
+async def set_role(
+    discord_id: int = Form(...),
+    role: str = Form(...),
+    auth=Depends(require_role("owner"))
+):
 
-    discord_id = payload.get("discord_id")
-    role = payload.get("role")
+    await roles.set_role(discord_id, role)
 
-    await db.db.execute("""
-    UPDATE members
-    SET role = ?
-    WHERE discord_id = ?
-    """, (role, discord_id))
-
-    await db.db.commit()
-
-    return {"status": "updated"}
+    return RedirectResponse("/dashboard", status_code=302)
