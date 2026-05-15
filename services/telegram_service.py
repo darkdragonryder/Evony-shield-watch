@@ -1,68 +1,56 @@
 """
-Telegram Service Layer
-Handles secure linking + message sending
+=========================================================
+ Telegram Service (Business Logic Layer)
+=========================================================
 """
 
-import secrets
-import aiohttp
 from database import db
-from config import Config
+from datetime import datetime
 
 
 class TelegramService:
 
-    # =========================================================
-    # GENERATE LINK TOKEN
-    # =========================================================
-    @staticmethod
-    async def generate_link_token(user_id: int):
-        token = secrets.token_urlsafe(16)
+    # =====================================================
+    # LINK TELEGRAM ACCOUNT
+    # =====================================================
 
-        await db.set_member_contact(
-            user_id,
-            telegram_link_token=token
-        )
+    async def link_account(self, token: str, telegram_id: str, username: str):
 
-        return token
+        record = await db.get_telegram_token(token)
 
-    # =========================================================
-    # VERIFY LINK TOKEN
-    # =========================================================
-    @staticmethod
-    async def link_telegram(user_id: int, telegram_id: str, token: str):
+        if not record:
+            return False, "❌ Invalid token"
 
-        user = await db.get_member_contact(user_id)
+        if record["expires_at"] < datetime.utcnow():
+            return False, "❌ Token expired"
 
-        if not user:
-            return False, "User not found"
-
-        if user.get("telegram_link_token") != token:
-            return False, "Invalid token"
-
-        await db.set_member_contact(
-            user_id,
+        await db.link_telegram_user(
+            token=token,
             telegram_id=telegram_id,
-            telegram_linked_at="now",
-            telegram_link_token=None
+            username=username,
+            discord_id=record["discord_id"]
         )
 
-        return True, "Telegram linked successfully"
+        return True, "✅ Telegram linked successfully"
 
-    # =========================================================
-    # SEND TELEGRAM MESSAGE
-    # =========================================================
-    @staticmethod
-    async def send_message(telegram_id: str, message: str):
+    # =====================================================
+    # UNLINK TELEGRAM
+    # =====================================================
 
-        if not Config.TELEGRAM_BOT_TOKEN:
-            return False
+    async def unlink_account(self, discord_id: int):
 
-        url = f"https://api.telegram.org/bot{Config.TELEGRAM_BOT_TOKEN}/sendMessage"
+        await db.set_member_contact(
+            discord_id,
+            telegram_id=None,
+            telegram_username=None
+        )
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json={
-                "chat_id": telegram_id,
-                "text": message,
-                "parse_mode": "HTML"
-            }) as resp:
-                return resp.status == 200
+        return True
+
+    # =====================================================
+    # GET STATUS
+    # =====================================================
+
+    async def get_status(self, discord_id: int):
+
+        return await db.get_member_contact(discord_id)
