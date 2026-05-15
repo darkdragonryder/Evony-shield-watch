@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard</title>
+</head>
+<body style="background:#0f0f0f;color:white">
+
+<h1>📊 Member Dashboard</h1>
+
+<table border="1" style="width:100%">
+<tr>
+    <th>Discord ID</th>
+    <th>Telegram</th>
+    <th>Role</th>
+</tr>
+
+{% for m in members %}
+<tr>
+    <td>{{ m[0] }}</td>
+    <td>{{ m[1] }}</td>
+    <td>{{ m[2] }}</td>
+</tr>
+{% endfor %}
+
+</table>
+
+</body>
+</html>
