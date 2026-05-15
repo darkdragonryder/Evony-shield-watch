@@ -13,6 +13,7 @@ from services.telegram_service import TelegramService
 
 
 class TelegramBotService:
+
     def __init__(self):
 
         # =====================================================
@@ -24,13 +25,12 @@ class TelegramBotService:
             .build()
         )
 
-        # Bridge (your logic layer)
         self.bridge = TelegramService()
 
-        # Handlers
         self.app.add_handler(CommandHandler("start", self.start))
 
         self._running = False
+        self._started = False
 
     # =====================================================
     # /START HANDLER
@@ -66,21 +66,20 @@ class TelegramBotService:
             await update.message.reply_text(result)
 
         except Exception as e:
+            print(f"[Telegram ERROR] {e}")
             await update.message.reply_text(
                 "❌ Telegram linking failed. Try again later."
             )
-            print(f"[Telegram ERROR] {e}")
 
     # =====================================================
-    # START BOT (SAFE MODE)
+    # START BOT (SAFE MODE FOR DISCORD INTEGRATION)
     # =====================================================
     async def start_async(self):
-        """
-        Proper async startup (avoids 'not initialized' error in v22)
-        """
-        if self._running:
+
+        if self._started:
             return
 
+        self._started = True
         self._running = True
 
         print("\n=================================================")
@@ -88,35 +87,52 @@ class TelegramBotService:
         print("=================================================\n")
 
         await self.app.initialize()
-        await self.app.start()
-        await self.app.updater.start_polling()
+
+        # Prevent double start crash
+        if not self.app.running:
+            await self.app.start()
+
+        if self.app.updater:
+            await self.app.updater.start_polling()
 
         print("✅ Telegram bot running")
 
     # =====================================================
-    # STOP BOT
+    # STOP BOT (SAFE SHUTDOWN)
     # =====================================================
     async def stop_async(self):
+
         if not self._running:
             return
 
         print("🛑 Stopping Telegram bot...")
 
-        await self.app.updater.stop()
-        await self.app.stop()
-        await self.app.shutdown()
+        try:
+            if self.app.updater:
+                await self.app.updater.stop()
+        except Exception:
+            pass
+
+        try:
+            await self.app.stop()
+        except Exception:
+            pass
+
+        try:
+            await self.app.shutdown()
+        except Exception:
+            pass
 
         self._running = False
+        self._started = False
 
         print("✅ Telegram bot stopped cleanly")
 
     # =====================================================
-    # SIMPLE RUN (OPTIONAL MANUAL MODE)
+    # SIMPLE RUN (STANDALONE MODE ONLY)
     # =====================================================
     def run(self):
-        """
-        Used ONLY if running Telegram standalone
-        """
+
         print("\n=================================================")
         print("📱 TELEGRAM BOT STARTING (STANDALONE)")
         print("=================================================\n")
