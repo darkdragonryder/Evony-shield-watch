@@ -1,15 +1,24 @@
 """
 =========================================================
- Telegram Bot Service (Polling Mode)
+ Evony Shield Watch
+ Telegram Bot Service (Polling Engine)
 =========================================================
 """
+
+# =========================================================
+# IMPORTS
+# =========================================================
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from config import Config
-from services.telegram_service import TelegramService
+from cogs.telegram import TelegramService
 
+
+# =========================================================
+# TELEGRAM BOT SERVICE
+# =========================================================
 
 class TelegramBotService:
 
@@ -19,46 +28,48 @@ class TelegramBotService:
             Config.TELEGRAM_BOT_TOKEN
         ).build()
 
-        self.service = TelegramService()
+        self.bridge = TelegramService()
 
-        self.app.add_handler(CommandHandler("start", self.start_command))
+        self.app.add_handler(CommandHandler("start", self.start))
+
 
     # =====================================================
-    # /START TOKEN
+    # /START HANDLER
     # =====================================================
 
-    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-        telegram_user = update.effective_user
+        user = update.effective_user
 
-        telegram_id = str(telegram_user.id)
-        username = telegram_user.username or telegram_user.first_name
+        token = context.args[0] if context.args else None
 
-        if not context.args:
-            await update.message.reply_text(
-                "❌ Missing token. Use /linktelegram in Discord first."
-            )
+        if not token:
+            await update.message.reply_text("❌ Missing token")
             return
 
-        token = context.args[0]
-
-        success, message = await self.service.link_account(
-            token,
-            telegram_id,
-            username
+        result = await self.bridge.handle_start_command(
+            str(user.id),
+            user.username or user.first_name,
+            token
         )
 
-        await update.message.reply_text(message)
+        await update.message.reply_text(result)
+
 
     # =====================================================
-    # RUN
+    # RUN BOT
     # =====================================================
 
     def run(self):
 
-        print("📲 Telegram Bot Running...")
+        print("📲 Telegram Bot Starting...")
+
         self.app.run_polling()
 
+
+# =========================================================
+# ENTRY POINT
+# =========================================================
 
 if __name__ == "__main__":
 
