@@ -1,9 +1,13 @@
 """
 =========================================================
  Evony Shield Watch
- Config System (Enterprise Ready)
+ Configuration Layer (Environment + Settings)
 =========================================================
 """
+
+# =========================================================
+# IMPORTS
+# =========================================================
 
 import os
 from dotenv import load_dotenv
@@ -11,17 +15,21 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+# =========================================================
+# CONFIG CLASS
+# =========================================================
+
 class Config:
 
     # =====================================================
-    # DISCORD
+    # DISCORD SETTINGS
     # =====================================================
 
     DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-    GUILD_ID = int(os.getenv("GUILD_ID", "0"))
+
 
     # =====================================================
-    # TELEGRAM
+    # TELEGRAM SETTINGS
     # =====================================================
 
     TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -29,25 +37,18 @@ class Config:
         os.getenv("TELEGRAM_LINK_EXPIRE_MINUTES", "10")
     )
 
-    # =====================================================
-    # DATABASE
-    # =====================================================
-
-    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///shield.db")
 
     # =====================================================
-    # ROLES (WEB DASHBOARD READY)
+    # DATABASE SETTINGS
     # =====================================================
 
-    ROLE_OWNER = "owner"
-    ROLE_ADMIN = "admin"
-    ROLE_COORDINATOR = "coordinator"
-    ROLE_MEMBER = "member"
+    DB_PATH = os.getenv("DB_PATH", "data.db")
+
 
     # =====================================================
-    # FEATURE FLAGS
+    # WEB DASHBOARD SETTINGS
     # =====================================================
 
-    ENABLE_TELEGRAM = True
-    ENABLE_DISCORD = True
-    ENABLE_WEB_DASHBOARD = False
+    WEB_SECRET_KEY = os.getenv("WEB_SECRET_KEY", "change_me")
+    WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0")
+    WEB_PORT = int(os.getenv("WEB_PORT", "5000"))
