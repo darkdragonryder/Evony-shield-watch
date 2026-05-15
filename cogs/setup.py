@@ -9,7 +9,6 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from database import db
-from utils.embeds import Embeds
 from config import Config
 from datetime import datetime, timedelta
 
@@ -24,6 +23,7 @@ class Setup(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild):
+
         channel = next(
             (ch for ch in guild.text_channels if ch.permissions_for(guild.me).send_messages),
             None
@@ -50,6 +50,7 @@ class Setup(commands.Cog):
     @app_commands.command(name="setup", description="Manual setup wizard")
     @app_commands.checks.has_permissions(administrator=True)
     async def slash_setup(self, interaction: discord.Interaction):
+
         await db.set_server_config(guild_id=interaction.guild_id)
 
         embed = discord.Embed(
@@ -58,7 +59,11 @@ class Setup(commands.Cog):
             color=0x1abc9c
         )
 
-        await interaction.response.send_message(embed=embed, view=BubbleStepView(), ephemeral=True)
+        await interaction.response.send_message(
+            embed=embed,
+            view=BubbleStepView(),
+            ephemeral=True
+        )
 
 
 # =======================================================
@@ -69,24 +74,51 @@ class BubbleStepView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=300)
 
-    @discord.ui.button(label="Use Existing Channel", style=discord.ButtonStyle.secondary, emoji="📋")
+    @discord.ui.button(
+        label="Use Existing Channel",
+        style=discord.ButtonStyle.secondary,
+        emoji="📋"
+    )
     async def use_existing(self, interaction: discord.Interaction, button: discord.ui.Button):
+
+        if not interaction.guild:
+            return await interaction.response.send_message("❌ Guild not found.", ephemeral=True)
+
         await interaction.response.send_message(
             "Select a channel for bubble reminders:",
             view=ChannelSelectView(step="bubble"),
             ephemeral=True
         )
 
-    @discord.ui.button(label="Create Bubble Channel", style=discord.ButtonStyle.primary, emoji="🫧")
+    @discord.ui.button(
+        label="Create Bubble Channel",
+        style=discord.ButtonStyle.primary,
+        emoji="🫧"
+    )
     async def create_new(self, interaction: discord.Interaction, button: discord.ui.Button):
+
         await interaction.response.defer(ephemeral=True)
 
         guild = interaction.guild
-        existing = discord.utils.get(guild.text_channels, name=Config.DEFAULT_BUBBLE_CHANNEL)
+        if not guild:
+            return await interaction.followup.send("❌ Guild not found.", ephemeral=True)
+
+        existing = discord.utils.get(
+            guild.text_channels,
+            name=Config.DEFAULT_BUBBLE_CHANNEL
+        )
 
         if existing:
-            await db.set_server_config(guild_id=guild.id, bubble_channel_id=existing.id)
-            await interaction.followup.send(f"✅ Using {existing.mention}", ephemeral=True)
+            await db.set_server_config(
+                guild_id=guild.id,
+                bubble_channel_id=existing.id
+            )
+
+            await interaction.followup.send(
+                f"✅ Using {existing.mention}",
+                ephemeral=True
+            )
+
             await self._next_step(interaction)
             return
 
@@ -102,17 +134,26 @@ class BubbleStepView(discord.ui.View):
             reason="Evony Shield Watch setup"
         )
 
-        await db.set_server_config(guild_id=guild.id, bubble_channel_id=channel.id)
-        await interaction.followup.send(f"✅ Created {channel.mention}", ephemeral=True)
+        await db.set_server_config(
+            guild_id=guild.id,
+            bubble_channel_id=channel.id
+        )
+
+        await interaction.followup.send(
+            f"✅ Created {channel.mention}",
+            ephemeral=True
+        )
 
         await self._next_step(interaction)
 
-    async def _next_step(self, interaction):
+    async def _next_step(self, interaction: discord.Interaction):
+
         embed = discord.Embed(
             title="Step 2/3: ⚔️ Battlefield Channel",
             description="Choose where event messages go:",
             color=0xe74c3c
         )
+
         await interaction.channel.send(embed=embed, view=BattlefieldStepView())
 
 
@@ -124,24 +165,48 @@ class BattlefieldStepView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=300)
 
-    @discord.ui.button(label="Use Existing Channel", style=discord.ButtonStyle.secondary, emoji="📋")
+    @discord.ui.button(
+        label="Use Existing Channel",
+        style=discord.ButtonStyle.secondary,
+        emoji="📋"
+    )
     async def use_existing(self, interaction: discord.Interaction, button: discord.ui.Button):
+
         await interaction.response.send_message(
             "Select battlefield channel:",
             view=ChannelSelectView(step="battlefield"),
             ephemeral=True
         )
 
-    @discord.ui.button(label="Create Battlefield Channel", style=discord.ButtonStyle.primary, emoji="⚔️")
+    @discord.ui.button(
+        label="Create Battlefield Channel",
+        style=discord.ButtonStyle.primary,
+        emoji="⚔️"
+    )
     async def create_new(self, interaction: discord.Interaction, button: discord.ui.Button):
+
         await interaction.response.defer(ephemeral=True)
 
         guild = interaction.guild
-        existing = discord.utils.get(guild.text_channels, name=Config.DEFAULT_BATTLEFIELD_CHANNEL)
+        if not guild:
+            return await interaction.followup.send("❌ Guild not found.", ephemeral=True)
+
+        existing = discord.utils.get(
+            guild.text_channels,
+            name=Config.DEFAULT_BATTLEFIELD_CHANNEL
+        )
 
         if existing:
-            await db.set_server_config(guild_id=guild.id, battlefield_channel_id=existing.id)
-            await interaction.followup.send(f"✅ Using {existing.mention}", ephemeral=True)
+            await db.set_server_config(
+                guild_id=guild.id,
+                battlefield_channel_id=existing.id
+            )
+
+            await interaction.followup.send(
+                f"✅ Using {existing.mention}",
+                ephemeral=True
+            )
+
             await self._next_step(interaction)
             return
 
@@ -157,22 +222,31 @@ class BattlefieldStepView(discord.ui.View):
             reason="Evony Shield Watch setup"
         )
 
-        await db.set_server_config(guild_id=guild.id, battlefield_channel_id=channel.id)
-        await interaction.followup.send(f"✅ Created {channel.mention}", ephemeral=True)
+        await db.set_server_config(
+            guild_id=guild.id,
+            battlefield_channel_id=channel.id
+        )
+
+        await interaction.followup.send(
+            f"✅ Created {channel.mention}",
+            ephemeral=True
+        )
 
         await self._next_step(interaction)
 
-    async def _next_step(self, interaction):
+    async def _next_step(self, interaction: discord.Interaction):
+
         embed = discord.Embed(
             title="Step 3/3: 🔄 First Event",
             description="Which event is this Friday?",
             color=0x9b59b6
         )
+
         await interaction.channel.send(embed=embed, view=EventStepView())
 
 
 # =======================================================
-# CHANNEL SELECT FIX (IMPORTANT FIX)
+# CHANNEL SELECT (FIXED SAFE VERSION)
 # =======================================================
 
 class ChannelSelectView(discord.ui.View):
@@ -180,15 +254,29 @@ class ChannelSelectView(discord.ui.View):
         super().__init__(timeout=300)
         self.step = step
 
-    @discord.ui.select(cls=discord.ui.ChannelSelect, channel_types=[discord.ChannelType.text])
-    async def select(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
-        channel = select.values[0]
+        self.add_item(ChannelSelect(step))
+
+class ChannelSelect(discord.ui.ChannelSelect):
+
+    def __init__(self, step: str):
+        super().__init__(channel_types=[discord.ChannelType.text])
+        self.step = step
+
+    async def callback(self, interaction: discord.Interaction):
+
+        channel = self.values[0]
 
         if self.step == "bubble":
-            await db.set_server_config(guild_id=interaction.guild_id, bubble_channel_id=channel.id)
+            await db.set_server_config(
+                guild_id=interaction.guild_id,
+                bubble_channel_id=channel.id
+            )
 
         elif self.step == "battlefield":
-            await db.set_server_config(guild_id=interaction.guild_id, battlefield_channel_id=channel.id)
+            await db.set_server_config(
+                guild_id=interaction.guild_id,
+                battlefield_channel_id=channel.id
+            )
 
         await interaction.response.send_message(
             f"✅ Set to {channel.mention}",
@@ -213,8 +301,17 @@ class EventStepView(discord.ui.View):
         await self._set(interaction, "ke", "⚔️ KE")
 
     async def _set(self, interaction, event_type, name):
+
+        if not interaction.guild:
+            return await interaction.response.send_message("❌ Guild missing.", ephemeral=True)
+
         today = datetime.now().date()
-        next_friday = today + timedelta((4 - today.weekday()) % 7 or 7)
+
+        days_until_friday = (4 - today.weekday()) % 7
+        if days_until_friday == 0:
+            days_until_friday = 7
+
+        next_friday = today + timedelta(days=days_until_friday)
 
         await db.set_event_schedule(
             guild_id=interaction.guild_id,
@@ -222,7 +319,10 @@ class EventStepView(discord.ui.View):
             next_event_date=next_friday
         )
 
-        await db.set_server_config(guild_id=interaction.guild_id, setup_complete=1)
+        await db.set_server_config(
+            guild_id=interaction.guild_id,
+            setup_complete=1
+        )
 
         await interaction.response.send_message(
             f"✅ Setup complete: {name}",
@@ -231,13 +331,17 @@ class EventStepView(discord.ui.View):
 
 
 # =======================================================
-# EXTRA COMMANDS COG
+# EXTRA COMMANDS COG (PLACEHOLDER SAFE)
 # =======================================================
 
 class SetupCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+
+# =======================================================
+# SETUP ENTRY
+# =======================================================
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Setup(bot))
