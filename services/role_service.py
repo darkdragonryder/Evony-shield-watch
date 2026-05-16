@@ -1,8 +1,6 @@
 """
-=========================================================
- Evony Shield Watch
- Role Service (Single Source of Truth)
-=========================================================
+Evony Shield Watch
+Role Service (Single Source of Truth - FIXED)
 """
 
 from database import db
@@ -29,13 +27,15 @@ class RoleService:
 
     async def set_role(self, discord_id: int, role: str):
 
-        await db.db.execute("""
-        UPDATE members
-        SET role = ?
-        WHERE discord_id = ?
-        """, (role, discord_id))
+        async with db.db_path and __import__("aiosqlite").connect(db.db_path) as conn:
 
-        await db.db.commit()
+            await conn.execute("""
+                UPDATE members
+                SET role = ?
+                WHERE user_id = ?
+            """, (role, discord_id))
+
+            await conn.commit()
 
     # =====================================================
     # PERMISSION CHECKS
@@ -44,7 +44,7 @@ class RoleService:
     async def is_admin(self, discord_id: int):
 
         role = await self.get_role(discord_id)
-        return role in ["owner", "admin"]
+        return role in ("owner", "admin")
 
     async def is_owner(self, discord_id: int):
 
