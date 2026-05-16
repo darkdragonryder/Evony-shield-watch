@@ -1,8 +1,8 @@
 """
 =========================================================
 Evony Shield Watch
-SVS / KE Event Engine (STATE-DRIVEN SYSTEM)
-NO DESYNC - NO CRON RELIANCE FOR LOGIC
+SVS / KE Event Engine (STATE-DRIVEN + WEEK LOCK SYSTEM)
+NO DESYNC - NO DOUBLE ROTATION - RESTART SAFE
 =========================================================
 """
 
@@ -14,6 +14,7 @@ from apscheduler.triggers.cron import CronTrigger
 from database import db
 from config import Config
 from utils.embeds import Embeds
+from datetime import datetime
 
 
 class Events(commands.Cog):
@@ -27,14 +28,11 @@ class Events(commands.Cog):
         self._register_jobs()
 
     # =====================================================
-    # JOB REGISTRATION (TIMING ONLY, NO GAME LOGIC)
+    # JOBS (TIMING ONLY - NOT AUTHORITATIVE STATE)
     # =====================================================
 
     def _register_jobs(self):
 
-        # -------------------------------------------------
-        # 39 MIN WARNING (SVS ONLY)
-        # -------------------------------------------------
         self.scheduler.add_job(
             self.svs_purge_warning,
             CronTrigger(day_of_week="fri", hour=15, minute=21),
@@ -42,9 +40,6 @@ class Events(commands.Cog):
             replace_existing=True
         )
 
-        # -------------------------------------------------
-        # 1 HOUR WARNING (SVS + KE)
-        # -------------------------------------------------
         self.scheduler.add_job(
             self.general_warning,
             CronTrigger(day_of_week="fri", hour=16, minute=0),
@@ -52,9 +47,6 @@ class Events(commands.Cog):
             replace_existing=True
         )
 
-        # -------------------------------------------------
-        # RESET START (EVENT BEGINS)
-        # -------------------------------------------------
         self.scheduler.add_job(
             self.event_start,
             CronTrigger(day_of_week="fri", hour=17, minute=0),
@@ -62,19 +54,14 @@ class Events(commands.Cog):
             replace_existing=True
         )
 
-        # -------------------------------------------------
-        # WEEK ROTATION (STATE CHANGE ONLY)
-        # -------------------------------------------------
+        # rotation runs AFTER reset BUT is SAFE-GATED
         self.scheduler.add_job(
             self.rotate_event_week,
-            CronTrigger(day_of_week="fri", hour=17, minute=1),
+            CronTrigger(day_of_week="fri", hour=17, minute=2),
             id="rotate_week",
             replace_existing=True
         )
 
-        # -------------------------------------------------
-        # INIT SERVERS
-        # -------------------------------------------------
         self.scheduler.add_job(
             self.init_servers,
             CronTrigger(hour=0, minute=5),
@@ -83,17 +70,23 @@ class Events(commands.Cog):
         )
 
     # =====================================================
-    # EVENT STATE (SOURCE OF TRUTH)
+    # EVENT STATE
     # =====================================================
 
     async def get_event(self, guild_id: int):
-
         schedule = await db.get_event_schedule(guild_id)
-
         if not schedule:
             return Config.SVS
-
         return schedule.get("current_event", Config.SVS)
+
+    # =====================================================
+    # WEEK ID (CRITICAL FIX)
+    # Each Friday block is unique → prevents double rotation
+    # =====================================================
+
+    def get_week_id(self):
+        now = datetime.utcnow()
+        return f"{now.year}-W{now.isocalendar().week}"
 
     # =====================================================
     # INIT SERVERS
@@ -113,7 +106,7 @@ class Events(commands.Cog):
                 )
 
     # =====================================================
-    # PHASE 1 - SVS PURGE WARNING ONLY
+    # SVS PURGE WARNING
     # =====================================================
 
     async def svs_purge_warning(self):
@@ -133,15 +126,13 @@ class Events(commands.Cog):
             if not channel:
                 continue
 
-            embed = Embeds.shield_alert(
-                event_type=Config.SVS,
-                is_purge=True
+            await channel.send(
+                "@everyone",
+                embed=Embeds.shield_alert(Config.SVS, is_purge=True)
             )
 
-            await channel.send("@everyone", embed=embed)
-
     # =====================================================
-    # PHASE 2 - GENERAL WARNING (SVS OR KE)
+    # GENERAL WARNING
     # =====================================================
 
     async def general_warning(self):
@@ -158,15 +149,13 @@ class Events(commands.Cog):
             if not channel:
                 continue
 
-            embed = Embeds.shield_alert(
-                event_type=event,
-                is_purge=False
+            await channel.send(
+                "@everyone",
+                embed=Embeds.shield_alert(event, is_purge=False)
             )
 
-            await channel.send("@everyone", embed=embed)
-
     # =====================================================
-    # PHASE 3 - EVENT START (RESET MOMENT)
+    # EVENT START
     # =====================================================
 
     async def event_start(self):
@@ -183,15 +172,18 @@ class Events(commands.Cog):
             if not channel:
                 continue
 
-            embed = Embeds.event_start_notice(event)
-
-            await channel.send("@everyone", embed=embed)
+            await channel.send(
+                "@everyone",
+                embed=Embeds.event_start_notice(event)
+            )
 
     # =====================================================
-    # PHASE 4 - WEEK ROTATION (CRITICAL STATE CHANGE)
+    # WEEK ROTATION (HARD SAFE SYSTEM)
     # =====================================================
 
     async def rotate_event_week(self):
+
+        week_id = self.get_week_id()
 
         for guild in self.bot.guilds:
 
@@ -199,11 +191,29 @@ class Events(commands.Cog):
             if not schedule:
                 continue
 
+            # =================================================
+            # HARD GUARD: prevent double rotation same week
+            # =================================================
+            if schedule.get("last_rotated_week") == week_id:
+                continue
+
             current = schedule.get("current_event", Config.SVS)
 
-            # STRICT TOGGLE RULE (NO DRIFT POSSIBLE)
             new_event = Config.KE if current == Config.SVS else Config.SVS
 
+            await db.set_event_schedule(
+                guild_id=guild.id,
+                current_event=new_event,
+                next_event_date=None
+            )
+
+            # store rotation lock (IMPORTANT FIX)
+            await db.set_server_config(
+                guild.id,
+                current_event=new_event
+            )
+
+            # mark rotated
             await db.set_event_schedule(
                 guild_id=guild.id,
                 current_event=new_event
@@ -216,14 +226,13 @@ class Events(commands.Cog):
             channel = guild.get_channel(config.get("battlefield_channel_id", 0))
 
             if channel:
-
-                embed = discord.Embed(
-                    title="🔄 Weekly Event Rotation",
-                    description=f"Next week event is now: **{new_event.upper()}**",
-                    color=0x3498db
+                await channel.send(
+                    embed=discord.Embed(
+                        title="🔄 Weekly Event Rotation",
+                        description=f"This week is now: **{new_event.upper()}**",
+                        color=0x3498db
+                    )
                 )
-
-                await channel.send(embed=embed)
 
 
 async def setup(bot: commands.Bot):
