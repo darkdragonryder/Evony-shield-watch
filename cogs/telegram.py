@@ -1,8 +1,8 @@
 """
-=========================================================
+
  Evony Shield Watch
  Telegram Bridge (Guild Bound - FIXED & HARDENED)
-=========================================================
+
 """
 
 import discord
