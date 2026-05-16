@@ -1,11 +1,15 @@
 """
+=========================================================
+Evony Shield Watch
 Custom Events (BOC/BOG/AllStars/Battlefield)
-FULLY FIXED - CLEAN DB + NO BROKEN SCHEDULERS
+FINAL STABLE VERSION
+=========================================================
 """
 
 import discord
 from discord.ext import commands
 from discord import app_commands
+
 from datetime import datetime, timedelta
 import pytz
 
@@ -14,13 +18,17 @@ from utils.embeds import Embeds
 from config import Config
 
 
+# =========================================================
+# COG
+# =========================================================
+
 class CustomEvents(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
     # =====================================================
-    # PERMISSION CHECK
+    # AUTH CHECK
     # =====================================================
 
     async def _is_coordinator(self, interaction: discord.Interaction) -> bool:
@@ -48,17 +56,17 @@ class CustomEvents(commands.Cog):
 
     @app_commands.command(
         name="event_create",
-        description="Create a custom event (BOC/BOG/AllStars/Battlefield)"
+        description="Create a custom war event"
     )
-    async def slash_event_create(self, interaction: discord.Interaction):
+    async def event_create(self, interaction: discord.Interaction):
 
         if not await self._is_coordinator(interaction):
             return await interaction.response.send_message(
-                "❌ You need the Event Coordinator role!",
+                "❌ Event Coordinator role required.",
                 ephemeral=True
             )
 
-        await interaction.response.send_modal(EventCreateModal())
+        await interaction.response.send_modal(EventCreateModal(self.bot))
 
     # =====================================================
     # CANCEL EVENT
@@ -68,11 +76,12 @@ class CustomEvents(commands.Cog):
         name="event_cancel",
         description="Cancel a custom event"
     )
-    async def slash_event_cancel(self, interaction: discord.Interaction, event_id: int):
+    @app_commands.describe(event_id="Event ID")
+    async def event_cancel(self, interaction: discord.Interaction, event_id: int):
 
         if not await self._is_coordinator(interaction):
             return await interaction.response.send_message(
-                "❌ You need the Event Coordinator role!",
+                "❌ No permission.",
                 ephemeral=True
             )
 
@@ -86,7 +95,7 @@ class CustomEvents(commands.Cog):
 
         try:
             channel = interaction.guild.get_channel(event["channel_id"])
-            if channel:
+            if channel and event.get("message_id"):
                 msg = await channel.fetch_message(event["message_id"])
                 await msg.delete()
         except:
@@ -100,14 +109,14 @@ class CustomEvents(commands.Cog):
         )
 
     # =====================================================
-    # EVENT LIST
+    # LIST EVENTS
     # =====================================================
 
     @app_commands.command(
         name="event_list",
-        description="List all active custom events"
+        description="List active events"
     )
-    async def slash_event_list(self, interaction: discord.Interaction):
+    async def event_list(self, interaction: discord.Interaction):
 
         events = await db.get_active_custom_events(interaction.guild_id)
 
@@ -117,21 +126,23 @@ class CustomEvents(commands.Cog):
                 ephemeral=True
             )
 
-        embed = discord.Embed(title="📅 Active Events", color=0x3498db)
+        embed = discord.Embed(
+            title="📅 Active Events",
+            color=0x3498db
+        )
 
-        for event in events:
+        for e in events:
 
-            start = event["start_time"]
-
+            start = e["start_time"]
             if isinstance(start, str):
                 start = datetime.fromisoformat(start)
 
             embed.add_field(
-                name=f"{event['name']} (ID: {event['event_id']})",
+                name=f"{e['name']} (ID: {e['event_id']})",
                 value=(
-                    f"Type: {event['event_type'].upper()}\n"
-                    f"Start: {start.strftime('%a %I:%M %p')}\n"
-                    f"Coord: <@{event['coordinator_id']}>"
+                    f"Type: {e['event_type'].upper()}\n"
+                    f"Start: {start.strftime('%a %H:%M')}\n"
+                    f"Coord: <@{e['coordinator_id']}>"
                 ),
                 inline=False
             )
@@ -139,18 +150,18 @@ class CustomEvents(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # =====================================================
-    # EVENT ROSTER
+    # ROSTER
     # =====================================================
 
     @app_commands.command(
         name="event_roster",
-        description="Show final roster for an event"
+        description="Show event roster"
     )
-    async def slash_event_roster(self, interaction: discord.Interaction, event_id: int):
+    async def event_roster(self, interaction: discord.Interaction, event_id: int):
 
         event = await db.get_custom_event(event_id)
 
-        if not event or event["guild_id"] != interaction.guild_id:
+        if not event:
             return await interaction.response.send_message(
                 "❌ Event not found.",
                 ephemeral=True
@@ -158,154 +169,96 @@ class CustomEvents(commands.Cog):
 
         checkins = await db.get_event_checkins(event_id)
 
-        yes_list = []
-        no_list = []
+        yes, no = [], []
 
         for c in checkins:
 
-            user = interaction.guild.get_member(c["user_id"])
-            name = user.mention if user else f"User {c['user_id']}"
+            member = interaction.guild.get_member(c["user_id"])
+            name = member.mention if member else str(c["user_id"])
 
             if c["status"] == "yes":
-                yes_list.append(name)
+                yes.append(name)
             else:
-                no_list.append(name)
+                no.append(name)
 
-        embed = Embeds.event_roster(
-            event["name"],
-            yes_list,
-            no_list
-        )
+        embed = Embeds.event_roster(event["name"], yes, no)
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # =====================================================
-    # REACTION CHECK-IN (FIXED SAFE VERSION)
-    # =====================================================
 
-    @commands.Cog.listener()
-    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
-
-        if payload.user_id == self.bot.user.id:
-            return
-
-        events = await db.get_active_custom_events(payload.guild_id)
-
-        for event in events:
-
-            if event.get("message_id") != payload.message_id:
-                continue
-
-            cutoff = event["checkin_cutoff"]
-
-            if isinstance(cutoff, str):
-                cutoff = datetime.fromisoformat(cutoff)
-
-            if datetime.utcnow() > cutoff:
-
-                channel = self.bot.get_channel(payload.channel_id)
-
-                if channel:
-                    await channel.send(
-                        f"<@{payload.user_id}> Check-in is closed!",
-                        delete_after=10
-                    )
-
-                return
-
-            emoji = str(payload.emoji)
-
-            status = None
-            if emoji == "✅":
-                status = "yes"
-            elif emoji == "❌":
-                status = "no"
-
-            if not status:
-                return
-
-            await db.checkin_member(
-                event["event_id"],
-                payload.user_id,
-                status
-            )
-
-            user = self.bot.get_user(payload.user_id)
-
-            if user:
-                try:
-                    await user.send(
-                        f"✅ You're **{status.upper()}** for **{event['name']}**!"
-                    )
-                except:
-                    pass
-
-            break
-
-
-# =====================================================
-# MODAL
-# =====================================================
+# =========================================================
+# MODAL (NO SCHEDULERS INSIDE)
+# =========================================================
 
 class EventCreateModal(discord.ui.Modal, title="Create Event"):
 
-    event_name = discord.ui.TextInput(label="Event Name", max_length=50)
-    event_type = discord.ui.TextInput(label="Type (boc/bog/allstars/battlefield)", max_length=15)
-    start_time = discord.ui.TextInput(label="Start Time (YYYY-MM-DD HH:MM)", max_length=16)
-    duration = discord.ui.TextInput(label="Duration (hours)", max_length=3)
-    cutoff = discord.ui.TextInput(label="Check-in Cutoff (mins before start)", max_length=3)
+    def __init__(self, bot):
+        super().__init__()
+        self.bot = bot
+
+    event_name = discord.ui.TextInput(label="Event Name")
+    event_type = discord.ui.TextInput(label="Type (boc/bog/allstars/battlefield)")
+    start_time = discord.ui.TextInput(label="Start (YYYY-MM-DD HH:MM)")
+    duration = discord.ui.TextInput(label="Duration (hours)")
+    cutoff = discord.ui.TextInput(label="Cutoff (mins before start)")
 
     async def on_submit(self, interaction: discord.Interaction):
 
+        # ---------------- VALIDATE TYPE ----------------
         event_type = self.event_type.value.lower()
 
         if event_type not in Config.CUSTOM_EVENT_TYPES:
             return await interaction.response.send_message(
-                "❌ Invalid type.",
+                "❌ Invalid event type.",
                 ephemeral=True
             )
 
+        # ---------------- PARSE TIME ----------------
         try:
             tz = pytz.timezone(Config.HOST_TIMEZONE)
-
-            start = datetime.strptime(
-                self.start_time.value,
-                "%Y-%m-%d %H:%M"
-            )
-
+            start = datetime.strptime(self.start_time.value, "%Y-%m-%d %H:%M")
             start = tz.localize(start)
 
         except:
             return await interaction.response.send_message(
-                "❌ Invalid time format.",
+                "❌ Invalid date format.",
                 ephemeral=True
             )
 
+        # ---------------- CALC TIMES ----------------
         try:
             duration = float(self.duration.value)
-            cutoff_mins = int(self.cutoff.value)
-
             end = start + timedelta(hours=duration)
+
+            cutoff_mins = int(self.cutoff.value)
             checkin_cutoff = start - timedelta(minutes=cutoff_mins)
 
         except:
             return await interaction.response.send_message(
-                "❌ Invalid duration/cutoff.",
+                "❌ Invalid numbers.",
                 ephemeral=True
             )
 
+        # ---------------- CHANNEL ----------------
         config = await db.get_server_config(interaction.guild_id)
 
-        battlefield = interaction.guild.get_channel(
-            config.get("battlefield_channel_id", 0)
-        ) if config else None
-
-        if not battlefield:
+        if not config:
             return await interaction.response.send_message(
-                "❌ Battlefield channel not set.",
+                "❌ Server not configured.",
                 ephemeral=True
             )
 
+        channel = interaction.guild.get_channel(
+            config.get("battlefield_channel_id", 0)
+        )
+
+        if not channel:
+            return await interaction.response.send_message(
+                "❌ Battlefield channel missing.",
+                ephemeral=True
+            )
+
+        # ---------------- SAVE EVENT ----------------
         event_id = await db.create_custom_event(
             guild_id=interaction.guild_id,
             event_type=event_type,
@@ -314,29 +267,31 @@ class EventCreateModal(discord.ui.Modal, title="Create Event"):
             end_time=end,
             coordinator_id=interaction.user.id,
             checkin_cutoff=checkin_cutoff,
-            channel_id=battlefield.id
+            channel_id=channel.id
         )
 
+        # ---------------- POST MESSAGE ----------------
         embed = Embeds.custom_event_checkin(
             self.event_name.value,
             event_type,
-            start.strftime("%A %B %d %I:%M %p"),
+            start.strftime("%A %H:%M"),
             interaction.user.mention,
-            checkin_cutoff.strftime("%I:%M %p")
+            checkin_cutoff.strftime("%H:%M")
         )
 
-        msg = await battlefield.send(
-            f"@everyone **{self.event_name.value}**",
+        msg = await channel.send(
+            f"@everyone **{self.event_name.value}** Check-in open!",
             embed=embed
         )
 
         await msg.add_reaction("✅")
         await msg.add_reaction("❌")
 
-        await db.update_custom_event(
-            event_id,
-            message_id=msg.id
-        )
+        await db.update_custom_event(event_id, message_id=msg.id)
+
+        # ---------------- IMPORTANT CHANGE ----------------
+        # NO scheduler here anymore.
+        # Cleanup is handled by global event system or DB watcher.
 
         await interaction.response.send_message(
             f"✅ Event created (ID: {event_id})",
@@ -344,9 +299,9 @@ class EventCreateModal(discord.ui.Modal, title="Create Event"):
         )
 
 
-# =====================================================
+# =========================================================
 # SETUP
-# =====================================================
+# =========================================================
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(CustomEvents(bot))
