@@ -16,7 +16,7 @@ class Config:
     # =====================================================
     # DISCORD
     # =====================================================
-    TOKEN = os.getenv("DISCORD_TOKEN")
+    BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 
     # =====================================================
     # TELEGRAM
@@ -27,10 +27,14 @@ class Config:
     def has_telegram() -> bool:
         return bool(Config.TELEGRAM_BOT_TOKEN)
 
-
     TELEGRAM_LINK_EXPIRE_MINUTES = int(
         os.getenv("TELEGRAM_LINK_EXPIRE_MINUTES", 10)
     )
+
+    # =====================================================
+    # DATABASE
+    # =====================================================
+    DB_PATH = os.getenv("DB_PATH", "evony.db")
 
     # =====================================================
     # TIME / RESET SYSTEM (SOURCE OF TRUTH)
@@ -57,12 +61,10 @@ class Config:
     # REMINDER OFFSETS (IMPORTANT)
     # =====================================================
 
-    # SVS timing
     SVS_PURGE_OFFSET_HOURS = 1
     SVS_PURGE_OFFSET_MINUTES = 39
     SVS_WARNING_OFFSET_HOURS = 1
 
-    # KE timing
     KE_WARNING_OFFSET_HOURS = 1
 
     # =====================================================
