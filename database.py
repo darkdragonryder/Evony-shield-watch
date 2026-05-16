@@ -1,6 +1,6 @@
 """
 Evony Shield Watch
-DATABASE CORE (HARDENED + SAFE + CONSISTENT)
+DATABASE CORE (STABLE CONTRACT VERSION)
 """
 
 import aiosqlite
@@ -14,13 +14,13 @@ class Database:
         self.db = None
 
     # =====================================================
-    # INIT (SAFE GUARDED)
+    # INIT
     # =====================================================
 
     async def init(self):
 
         if self.db is not None:
-            return  # already initialized safely
+            return
 
         self.db = await aiosqlite.connect(self.db_path)
         self.db.row_factory = aiosqlite.Row
@@ -31,7 +31,7 @@ class Database:
         await self.db.commit()
 
     # =====================================================
-    # SAFE EXEC GUARD
+    # INTERNAL GUARD
     # =====================================================
 
     def _require_db(self):
@@ -99,18 +99,37 @@ class Database:
         """)
 
     # =====================================================
-    # MEMBER UPSERT (SAFE)
+    # EVENT SCHEDULE (READ)
     # =====================================================
 
-    async def set_member_contact(self, discord_id: int, **kwargs):
+    async def get_event_schedule(self, guild_id: int):
+
+        self._require_db()
+
+        cursor = await self.db.execute("""
+            SELECT * FROM event_schedule WHERE guild_id = ?
+        """, (guild_id,))
+
+        row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        return dict(row)
+
+    # =====================================================
+    # EVENT SCHEDULE (WRITE)
+    # =====================================================
+
+    async def set_event_schedule(self, guild_id: int, **kwargs):
 
         self._require_db()
 
         if not kwargs:
-            await self.db.execute(
-                "INSERT OR IGNORE INTO members (discord_id) VALUES (?)",
-                (discord_id,)
-            )
+            await self.db.execute("""
+                INSERT OR IGNORE INTO event_schedule (guild_id)
+                VALUES (?)
+            """, (guild_id,))
             await self.db.commit()
             return
 
@@ -121,25 +140,57 @@ class Database:
             fields.append(f"{k} = ?")
             values.append(v)
 
+        values.append(guild_id)
+
         await self.db.execute(f"""
-        INSERT INTO members (discord_id)
-        VALUES (?)
-        ON CONFLICT(discord_id)
-        DO UPDATE SET {", ".join(fields)}
-        """, [discord_id] + values)
+            INSERT INTO event_schedule (guild_id)
+            VALUES (?)
+            ON CONFLICT(guild_id)
+            DO UPDATE SET {", ".join(fields)}
+        """, values)
 
         await self.db.commit()
 
     # =====================================================
-    # GET MEMBER
+    # MEMBER
     # =====================================================
+
+    async def set_member_contact(self, discord_id: int, **kwargs):
+
+        self._require_db()
+
+        if not kwargs:
+            await self.db.execute("""
+                INSERT OR IGNORE INTO members (discord_id)
+                VALUES (?)
+            """, (discord_id,))
+            await self.db.commit()
+            return
+
+        fields = []
+        values = []
+
+        for k, v in kwargs.items():
+            fields.append(f"{k} = ?")
+            values.append(v)
+
+        values.append(discord_id)
+
+        await self.db.execute(f"""
+            INSERT INTO members (discord_id)
+            VALUES (?)
+            ON CONFLICT(discord_id)
+            DO UPDATE SET {", ".join(fields)}
+        """, values)
+
+        await self.db.commit()
 
     async def get_member_contact(self, discord_id: int):
 
         self._require_db()
 
         cursor = await self.db.execute("""
-        SELECT * FROM members WHERE discord_id = ?
+            SELECT * FROM members WHERE discord_id = ?
         """, (discord_id,))
 
         row = await cursor.fetchone()
@@ -158,10 +209,10 @@ class Database:
         self._require_db()
 
         if not kwargs:
-            await self.db.execute(
-                "INSERT OR IGNORE INTO server_config (guild_id) VALUES (?)",
-                (guild_id,)
-            )
+            await self.db.execute("""
+                INSERT OR IGNORE INTO server_config (guild_id)
+                VALUES (?)
+            """, (guild_id,))
             await self.db.commit()
             return
 
@@ -172,136 +223,13 @@ class Database:
             fields.append(f"{k} = ?")
             values.append(v)
 
-        await self.db.execute(f"""
-        INSERT INTO server_config (guild_id)
-        VALUES (?)
-        ON CONFLICT(guild_id)
-        DO UPDATE SET {", ".join(fields)}
-        """, [guild_id] + values)
-
-        await self.db.commit()
-
-    # =====================================================
-    # EVENT SCHEDULE
-    # =====================================================
-
-    async def set_event_schedule(self, guild_id: int, **kwargs):
-
-        self._require_db()
-
-        fields = []
-        values = []
-
-        for k, v in kwargs.items():
-            fields.append(f"{k} = ?")
-            values.append(v)
+        values.append(guild_id)
 
         await self.db.execute(f"""
-        INSERT INTO event_schedule (guild_id)
-        VALUES (?)
-        ON CONFLICT(guild_id)
-        DO UPDATE SET {", ".join(fields)}
-        """, [guild_id] + values)
-
-        await self.db.commit()
-
-    # =====================================================
-    # CUSTOM EVENTS
-    # =====================================================
-
-    async def create_custom_event(self, **data):
-
-        self._require_db()
-
-        columns = ", ".join(data.keys())
-        placeholders = ", ".join(["?"] * len(data))
-        values = list(data.values())
-
-        cursor = await self.db.execute(f"""
-        INSERT INTO custom_events ({columns})
-        VALUES ({placeholders})
+            INSERT INTO server_config (guild_id)
+            VALUES (?)
+            ON CONFLICT(guild_id)
+            DO UPDATE SET {", ".join(fields)}
         """, values)
 
         await self.db.commit()
-
-        return cursor.lastrowid
-
-    async def get_custom_events(self, guild_id: int):
-
-        self._require_db()
-
-        cursor = await self.db.execute("""
-        SELECT * FROM custom_events
-        WHERE guild_id = ?
-        ORDER BY start_time ASC
-        """, (guild_id,))
-
-        rows = await cursor.fetchall()
-
-        return [dict(r) for r in rows]
-
-    # =====================================================
-    # TELEGRAM LINK TOKENS
-    # =====================================================
-
-    async def create_telegram_link(
-        self,
-        token,
-        discord_id,
-        guild_id,
-        expiry
-    ):
-
-        self._require_db()
-
-        await self.db.execute("""
-        INSERT INTO telegram_links
-        (token, discord_id, guild_id, expiry)
-        VALUES (?, ?, ?, ?)
-        """, (token, discord_id, guild_id, expiry))
-
-        await self.db.commit()
-
-    async def get_telegram_link(self, token):
-
-        self._require_db()
-
-        cursor = await self.db.execute("""
-        SELECT * FROM telegram_links
-        WHERE token = ?
-        """, (token,))
-
-        row = await cursor.fetchone()
-
-        if not row:
-            return None
-
-        return dict(row)
-
-    async def delete_telegram_link(self, token):
-
-        self._require_db()
-
-        await self.db.execute("""
-        DELETE FROM telegram_links
-        WHERE token = ?
-        """, (token,))
-
-        await self.db.commit()
-
-    # =====================================================
-    # CLEAN CLOSE
-    # =====================================================
-
-    async def close(self):
-
-        if self.db:
-            await self.db.close()
-            self.db = None
-
-
-# =====================================================
-# GLOBAL DATABASE INSTANCE
-# =====================================================
-
-db = Database()
