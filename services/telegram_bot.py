@@ -1,8 +1,6 @@
 """
-=========================================================
 Evony Shield Watch
-Telegram Bridge Service (HARDENED + RESILIENT)
-=========================================================
+Telegram Bridge Service (HARDENED + PRODUCTION SAFE)
 """
 
 import aiohttp
@@ -45,9 +43,10 @@ class TelegramBotService:
 
             self.running = False
 
-            if self.session:
+            if self.session and not self.session.closed:
                 await self.session.close()
-                self.session = None
+
+            self.session = None
 
             print("📲 Telegram service stopped")
 
@@ -56,7 +55,12 @@ class TelegramBotService:
     # =====================================================
 
     def is_ready(self) -> bool:
-        return self.running and self.session is not None
+
+        return (
+            self.running
+            and self.session is not None
+            and not self.session.closed
+        )
 
     # =====================================================
     # SEND MESSAGE (HARDENED)
@@ -79,21 +83,43 @@ class TelegramBotService:
             "disable_web_page_preview": True
         }
 
-        # =================================================
-        # RETRY LOOP (CRITICAL HARDENING)
-        # =================================================
-
         for attempt in range(3):
 
             try:
 
-                async with self.session.post(url, data=payload, timeout=10) as resp:
+                async with self.session.post(
+                    url,
+                    data=payload,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
 
+                    # -------------------------------------------------
+                    # SUCCESS
+                    # -------------------------------------------------
                     if resp.status == 200:
                         return True
 
-                    # log failure but retry
                     body = await resp.text()
+
+                    # -------------------------------------------------
+                    # NON-RETRYABLE ERRORS
+                    # -------------------------------------------------
+                    if resp.status in (400, 401, 403, 404):
+                        logging.error(f"Telegram fatal error {resp.status}: {body}")
+                        return False
+
+                    # -------------------------------------------------
+                    # RATE LIMIT HANDLING
+                    # -------------------------------------------------
+                    if resp.status == 429:
+                        retry_after = resp.headers.get("Retry-After")
+
+                        wait_time = int(retry_after) if retry_after else 5
+
+                        logging.warning(f"Telegram rate limited, waiting {wait_time}s")
+                        await asyncio.sleep(wait_time)
+                        continue
+
                     logging.warning(f"Telegram error {resp.status}: {body}")
 
             except asyncio.TimeoutError:
@@ -102,12 +128,12 @@ class TelegramBotService:
             except Exception as e:
                 logging.error(f"Telegram exception: {e}")
 
-            await asyncio.sleep(2 * (attempt + 1))  # backoff
+            await asyncio.sleep(2 * (attempt + 1))
 
         return False
 
     # =====================================================
-    # SAFE WRAPPER (USED BY DISCORD COGS)
+    # SAFE WRAPPER
     # =====================================================
 
     async def notify(self, chat_id: str, message: str, title: str = "Evony Alert"):
