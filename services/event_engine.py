@@ -1,149 +1,84 @@
 """
 =========================================================
-Evony Shield Watch
-Event Engine (SINGLE SOURCE OF TRUTH)
-FIXED SVS / KE GLOBAL CYCLE
+ Evony Shield Watch
+ Event Engine (SINGLE SOURCE OF TRUTH)
+ FIXED SVS / KE WEEK CYCLE SYSTEM
 =========================================================
 """
 
 from datetime import datetime, timedelta
-import pytz
-
-from database import db
 from config import Config
+from database import db
+import pytz
 
 
 class EventEngine:
+    """
+    Controls the GLOBAL event cycle:
+    - Friday reset → KE starts OR SVS starts (based on state)
+    - Monday reset → no change (cycle continues)
+    - Persistent DB state prevents desync
+    """
 
     # =====================================================
-    # CORE RULE:
-    # FIXED GLOBAL CYCLE
-    # =====================================================
-    # Friday reset → KE STARTS
-    # Sat → KE
-    # Sun → KE
-    # Mon → KE until reset
-    # Next Friday reset → SVS starts
-    # =====================================================
-
-    KE_DAYS = {4, 5, 6, 0}  # Fri, Sat, Sun, Mon (Mon = 0 if week wraps in your system handling)
-    SVS_DAYS = {1, 2, 3}    # Tue, Wed, Thu
-
-    # =====================================================
-    # GET CURRENT EVENT (GLOBAL TRUTH)
+    # GET CURRENT EVENT (SOURCE OF TRUTH)
     # =====================================================
 
     @staticmethod
     async def get_current_event(guild_id: int) -> str:
+        data = await db.get_event_schedule(guild_id)
 
-        schedule = await db.get_event_schedule(guild_id)
+        if not data:
+            return Config.SVS
 
-        if not schedule:
-            return "ke"  # default safe state
-
-        return schedule.get("current_event", "ke")
-
-    # =====================================================
-    # DETERMINE EVENT FROM TIME (NO STATE DRIFT)
-    # =====================================================
-
-    @staticmethod
-    def get_event_from_time(now: datetime = None) -> str:
-
-        tz = pytz.timezone(Config.HOST_TIMEZONE)
-        now = now or datetime.now(tz)
-
-        weekday = now.weekday()
-
-        # FIXED RULE SET
-        if weekday in EventEngine.KE_DAYS:
-            return "ke"
-
-        return "svs"
+        return data.get("current_event", Config.SVS)
 
     # =====================================================
-    # SYNC DB STATE (CALLED ON STARTUP / DAILY)
+    # FORCE SET EVENT (MANUAL OVERRIDE SAFE)
     # =====================================================
 
     @staticmethod
-    async def sync_guild_state(guild_id: int):
-
-        current = EventEngine.get_event_from_time()
-
+    async def set_event(guild_id: int, event: str):
         await db.set_event_schedule(
             guild_id=guild_id,
-            current_event=current
+            current_event=event
         )
 
-        return current
-
     # =====================================================
-    # NEXT EVENT PREDICTION
+    # TOGGLE EVENT (CYCLE LOGIC)
     # =====================================================
 
     @staticmethod
-    def get_next_event(now: datetime = None) -> str:
+    async def toggle_event(guild_id: int):
 
-        current = EventEngine.get_event_from_time(now)
+        current = await EventEngine.get_current_event(guild_id)
 
-        return "svs" if current == "ke" else "ke"
+        new_event = Config.KE if current == Config.SVS else Config.SVS
+
+        await EventEngine.set_event(guild_id, new_event)
+
+        return new_event
 
     # =====================================================
-    # PURGE LOGIC (SVS ONLY)
+    # GET NEXT RESET (FRIDAY ANCHOR SYSTEM)
     # =====================================================
 
     @staticmethod
-    def is_svs_purge_time(now: datetime = None) -> bool:
-
+    def get_next_reset():
         tz = pytz.timezone(Config.HOST_TIMEZONE)
-        now = now or datetime.now(tz)
+        now = datetime.now(tz)
 
-        # Example rule: 1h39 before reset
-        reset = now.replace(
+        # next Friday reset
+        days_ahead = (4 - now.weekday()) % 7
+        if days_ahead == 0:
+            days_ahead = 7
+
+        reset = now + timedelta(days=days_ahead)
+        reset = reset.replace(
             hour=Config.RESET_HOUR,
             minute=Config.RESET_MINUTE,
             second=0,
             microsecond=0
         )
 
-        if reset < now:
-            reset += timedelta(days=1)
-
-        return now >= (reset - timedelta(hours=1, minutes=39)) and now < (reset - timedelta(hours=1))
-
-    # =====================================================
-    # GENERAL WARNING WINDOW
-    # =====================================================
-
-    @staticmethod
-    def is_warning_time(now: datetime = None) -> bool:
-
-        tz = pytz.timezone(Config.HOST_TIMEZONE)
-        now = now or datetime.now(tz)
-
-        reset = now.replace(
-            hour=Config.RESET_HOUR,
-            minute=Config.RESET_MINUTE,
-            second=0,
-            microsecond=0
-        )
-
-        if reset < now:
-            reset += timedelta(days=1)
-
-        return now >= (reset - timedelta(hours=1)) and now < reset
-
-    # =====================================================
-    # RESET DETECTION
-    # =====================================================
-
-    @staticmethod
-    def is_reset_time(now: datetime = None) -> bool:
-
-        tz = pytz.timezone(Config.HOST_TIMEZONE)
-        now = now or datetime.now(tz)
-
-        return (
-            now.hour == Config.RESET_HOUR and
-            now.minute == Config.RESET_MINUTE
-        )
+        return reset
