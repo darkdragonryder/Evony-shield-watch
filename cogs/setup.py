@@ -1,11 +1,10 @@
 """
-=========================================================
+
  Evony Shield Watch
  Setup System (FINAL INTEGRATION FIX)
  - Auto setup on join
  - Manual setup wizard
- - EventEngine driven (NO LOCAL LOGIC)
-=========================================================
+ - EventEngine driven (NO LOCAL LOGIC)=========================================================
 """
 
 import discord
