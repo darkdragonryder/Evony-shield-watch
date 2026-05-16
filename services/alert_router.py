@@ -1,65 +1,59 @@
 """
-=========================================================
 Evony Shield Watch
-ALERT ROUTER (COMPATIBILITY LAYER)
-- Bridges event engine → dispatcher
-- Prevents broken imports during rebuild
-=========================================================
+Alert Router (FIXED COMPATIBILITY LAYER)
 """
 
 from services.alert_dispatcher import AlertDispatcher
 
 
 class NotificationRouter:
-    """
-    Thin routing layer so main.py / event engine
-    never depends directly on dispatcher internals.
-    """
 
-    def __init__(self, bot=None, db=None):
+    def __init__(self, bot=None):
+
         self.bot = bot
-        self.db = db
-        self.dispatcher = AlertDispatcher(bot=bot, db=db)
+        self.dispatcher = AlertDispatcher(bot=bot)
 
     # =====================================================
-    # MAIN ROUTE ENTRYPOINT
+    # MAIN ROUTE
     # =====================================================
 
     async def send_alert(self, guild_id: int, message: str, **kwargs):
-        """
-        Generic alert router entrypoint.
 
-        Everything (SVS, KE, custom events, reminders)
-        flows through here.
-        """
+        guild = self.bot.get_guild(guild_id)
+        if not guild:
+            return {"sent": 0, "failed": 0}
 
         return await self.dispatcher.send_alert(
-            guild_id=guild_id,
+            guild,
+            title=kwargs.get("title", "Alert"),
             message=message,
-            **kwargs
+            min_role=kwargs.get("min_role", "member")
         )
 
     # =====================================================
-    # EVENT SPECIFIC HELPERS (SAFE WRAPPERS)
+    # WRAPPERS
     # =====================================================
 
     async def send_svs_alert(self, guild_id: int, message: str):
+
         return await self.send_alert(
-            guild_id=guild_id,
-            message=message,
-            event_type="svs"
+            guild_id,
+            message,
+            title="⚔️ SVS ALERT"
         )
 
     async def send_ke_alert(self, guild_id: int, message: str):
+
         return await self.send_alert(
-            guild_id=guild_id,
-            message=message,
-            event_type="ke"
+            guild_id,
+            message,
+            title="🔥 KE ALERT"
         )
 
     async def send_custom_alert(self, guild_id: int, message: str):
+
         return await self.send_alert(
-            guild_id=guild_id,
-            message=message,
-            event_type="custom"
+            guild_id,
+            message,
+            title="📢 CUSTOM ALERT"
         )
