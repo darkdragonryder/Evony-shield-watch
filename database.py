@@ -1,32 +1,29 @@
 """
 =========================================================
- Evony Shield Watch
- Database Layer (STABLE - Telegram + Setup + Roles)
+Evony Shield Watch
+Database Layer (STABLE - FULLY ALIGNED SYSTEM)
 =========================================================
 """
 
 import aiosqlite
-from datetime import datetime
 
 DB_PATH = "evony_bot.db"
 
 
 class Database:
 
-    def __init__(self):
+    def init(self):
         self.db_path = DB_PATH
 
     # =====================================================
-    # INIT DATABASE
+    # INIT
     # =====================================================
 
     async def init(self):
 
         async with aiosqlite.connect(self.db_path) as db:
 
-            # -----------------------------
-            # MEMBERS TABLE
-            # -----------------------------
+            # MEMBERS
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS members (
                     user_id INTEGER PRIMARY KEY,
@@ -37,9 +34,7 @@ class Database:
                 )
             """)
 
-            # -----------------------------
             # TELEGRAM TOKENS
-            # -----------------------------
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS telegram_links (
                     user_id INTEGER,
@@ -48,27 +43,41 @@ class Database:
                 )
             """)
 
-            # -----------------------------
-            # SERVER CONFIG (EXPANDED FOR SETUP FLOW)
-            # -----------------------------
+            # SERVER CONFIG
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS servers (
                     guild_id INTEGER PRIMARY KEY,
-
                     current_event TEXT,
-
                     bubble_channel_id INTEGER,
                     battlefield_channel_id INTEGER,
-
                     event_coordinator_role_id INTEGER,
-
                     setup_complete INTEGER DEFAULT 0
                 )
             """)
 
-            # -----------------------------
-            # ROLES SYSTEM
-            # -----------------------------
+            # EVENT TRACKING (NEW - REQUIRED)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS event_log (
+                    guild_id INTEGER,
+                    event_type TEXT,
+                    reminder_type TEXT,
+                    day TEXT,
+                    PRIMARY KEY (guild_id, event_type, reminder_type, day)
+                )
+            """)
+
+            # BUBBLE TRACKING (NEW - PREVENT SPAM)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS bubble_log (
+                    guild_id INTEGER,
+                    user_id INTEGER,
+                    event_type TEXT,
+                    day TEXT,
+                    PRIMARY KEY (guild_id, user_id, event_type, day)
+                )
+            """)
+
+            # ROLES
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS roles (
                     user_id INTEGER PRIMARY KEY,
@@ -79,7 +88,7 @@ class Database:
             await db.commit()
 
     # =====================================================
-    # MEMBER SYSTEM
+    # MEMBER CONTACT
     # =====================================================
 
     async def set_member_contact(self, user_id, **kwargs):
@@ -91,38 +100,42 @@ class Database:
                 VALUES (?)
             """, (user_id,))
 
-            # SAFE UPDATE (prevents SQL injection via key)
-            allowed_fields = {
-                "timezone",
-                "opt_in",
-                "telegram_id",
-                "telegram_username"
-            }
+            allowed = {"timezone", "opt_in", "telegram_id", "telegram_username"}
 
-            for key, value in kwargs.items():
-
-                if key not in allowed_fields:
-                    continue
-
-                await db.execute(f"""
-                    UPDATE members
-                    SET {key} = ?
-                    WHERE user_id = ?
-                """, (value, user_id))
+            for k, v in kwargs.items():
+                if k in allowed:
+                    await db.execute(
+                        f"UPDATE members SET {k}=? WHERE user_id=?",
+                        (v, user_id)
+                    )
 
             await db.commit()
 
-    async def delete_member_data(self, user_id):
+    async def get_member_contact(self, user_id):
 
         async with aiosqlite.connect(self.db_path) as db:
 
-            await db.execute("DELETE FROM members WHERE user_id=?", (user_id,))
-            await db.execute("DELETE FROM roles WHERE user_id=?", (user_id,))
+            cursor = await db.execute("""
+                SELECT user_id, timezone, opt_in, telegram_id, telegram_username
+                FROM members
+                WHERE user_id = ?
+            """, (user_id,))
 
-            await db.commit()
+            row = await cursor.fetchone()
+
+            if not row:
+                return None
+
+            return {
+                "user_id": row[0],
+                "timezone": row[1],
+                "opt_in": row[2],
+                "telegram_id": row[3],
+                "telegram_username": row[4],
+            }
 
     # =====================================================
-    # TELEGRAM SYSTEM
+    # TELEGRAM
     # =====================================================
 
     async def create_telegram_link_token(self, user_id, token, expiry):
@@ -141,8 +154,7 @@ class Database:
         async with aiosqlite.connect(self.db_path) as db:
 
             cursor = await db.execute("""
-                SELECT user_id FROM telegram_links
-                WHERE token = ?
+                SELECT user_id FROM telegram_links WHERE token=?
             """, (token,))
 
             row = await cursor.fetchone()
@@ -154,13 +166,12 @@ class Database:
 
             await db.execute("""
                 UPDATE members
-                SET telegram_id = ?, telegram_username = ?
-                WHERE user_id = ?
+                SET telegram_id=?, telegram_username=?
+                WHERE user_id=?
             """, (telegram_id, username, user_id))
 
             await db.execute("""
-                DELETE FROM telegram_links
-                WHERE token = ?
+                DELETE FROM telegram_links WHERE token=?
             """, (token,))
 
             await db.commit()
@@ -180,7 +191,7 @@ class Database:
                 VALUES (?)
             """, (guild_id,))
 
-            allowed_fields = {
+            allowed = {
                 "current_event",
                 "bubble_channel_id",
                 "battlefield_channel_id",
@@ -188,16 +199,12 @@ class Database:
                 "setup_complete"
             }
 
-            for key, value in kwargs.items():
-
-                if key not in allowed_fields:
-                    continue
-
-                await db.execute(f"""
-                    UPDATE servers
-                    SET {key} = ?
-                    WHERE guild_id = ?
-                """, (value, guild_id))
+            for k, v in kwargs.items():
+                if k in allowed:
+                    await db.execute(
+                        f"UPDATE servers SET {k}=? WHERE guild_id=?",
+                        (v, guild_id)
+                    )
 
             await db.commit()
 
@@ -208,7 +215,7 @@ class Database:
             cursor = await db.execute("""
                 SELECT *
                 FROM servers
-                WHERE guild_id = ?
+                WHERE guild_id=?
             """, (guild_id,))
 
             row = await cursor.fetchone()
@@ -224,6 +231,97 @@ class Database:
                 "event_coordinator_role_id": row[4],
                 "setup_complete": row[5],
             }
+
+    # =====================================================
+    # EVENT SCHEDULING (REQUIRED FIX)
+    # =====================================================
+
+    async def set_event_schedule(self, guild_id, current_event=None, next_event_date=None):
+
+        await self.set_server_config(
+            guild_id,
+            current_event=current_event
+        )
+
+    async def get_event_schedule(self, guild_id):
+
+        config = await self.get_server_config(guild_id)
+        if not config:
+            return None
+
+        return {
+            "current_event": config.get("current_event"),
+            "next_event_date": None
+        }
+
+    async def rotate_event(self, guild_id):
+
+        config = await self.get_server_config(guild_id)
+        if not config:
+            return "svs"
+
+        new_event = "ke" if config["current_event"] == "svs" else "svs"
+
+        await self.set_server_config(
+            guild_id,
+            current_event=new_event
+        )
+
+        return new_event
+
+    # =====================================================
+    # REMINDER LOGGING (FIXED)
+    # =====================================================
+
+    async def log_reminder(self, guild_id, event_type, reminder_type):
+
+        async with aiosqlite.connect(self.db_path) as db:
+
+            await db.execute("""
+                INSERT OR REPLACE INTO event_log
+                (guild_id, event_type, reminder_type, day)
+                VALUES (?, ?, ?, date('now'))
+            """, (guild_id, event_type, reminder_type))
+
+            await db.commit()
+
+    async def was_reminder_sent_today(self, guild_id, event_type, reminder_type):
+
+        async with aiosqlite.connect(self.db_path) as db:
+
+            cursor = await db.execute("""
+                SELECT 1 FROM event_log
+                WHERE guild_id=? AND event_type=? AND reminder_type=? AND day=date('now')
+            """, (guild_id, event_type, reminder_type))
+
+            return await cursor.fetchone() is not None
+
+    # =====================================================
+    # BUBBLE TRACKING
+    # =====================================================
+
+    async def track_bubble_reminder(self, guild_id, user_id, event_type):
+
+        async with aiosqlite.connect(self.db_path) as db:
+
+            await db.execute("""
+                INSERT OR REPLACE INTO bubble_log
+                (guild_id, user_id, event_type, day)
+                VALUES (?, ?, ?, date('now'))
+            """, (guild_id, user_id, event_type))
+
+            await db.commit()
+
+    async def has_bubble_reminder_today(self, guild_id, user_id, event_type):
+
+        async with aiosqlite.connect(self.db_path) as db:
+
+            cursor = await db.execute("""
+                SELECT 1 FROM bubble_log
+                WHERE guild_id=? AND user_id=? AND event_type=? AND day=date('now')
+            """, (guild_id, user_id, event_type))
+
+            return await cursor.fetchone() is not None
 
     # =====================================================
     # ROLE SYSTEM
@@ -245,18 +343,12 @@ class Database:
         async with aiosqlite.connect(self.db_path) as db:
 
             cursor = await db.execute("""
-                SELECT role
-                FROM roles
-                WHERE user_id = ?
+                SELECT role FROM roles WHERE user_id=?
             """, (user_id,))
 
             row = await cursor.fetchone()
 
             return row[0] if row else "member"
 
-
-# =========================================================
-# SINGLETON
-# =========================================================
 
 db = Database()
