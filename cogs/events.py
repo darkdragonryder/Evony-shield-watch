@@ -1,11 +1,11 @@
 """
-=========================================================
+
  Evony Shield Watch
  Events System (FINAL CLEAN ALIGNMENT)
  - Scheduler = triggers only
  - EventEngine = state only
  - Embeds = display only
-=========================================================
+
 """
 
 import discord
