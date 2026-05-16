@@ -1,9 +1,8 @@
 """
 Enterprise Member Service
-Handles lifecycle, cleanup, restore, and identity tracking
+Fixed + Multi-Guild Safe + DB-Aligned
 """
 
-import datetime
 from database import db
 
 
@@ -14,9 +13,14 @@ class MemberService:
     # =========================================================
     @staticmethod
     async def on_member_join(member):
-        await db.set_member_contact(member.id)  # ensure exists
 
-        # track join event for dashboard/audit
+        # ensure record exists
+        await db.set_member_contact(member.id)
+
+        # restore opt-in if user returns
+        await db.set_member_contact(member.id, opt_in=1)
+
+        # audit log
         await db.log_reminder(
             guild_id=member.guild.id,
             event_type="member",
@@ -24,22 +28,20 @@ class MemberService:
         )
 
     # =========================================================
-    # MEMBER LEAVE (SOFT DELETE)
+    # MEMBER LEAVE (SOFT DISABLE)
     # =========================================================
     @staticmethod
     async def on_member_remove(member):
+
         contact = await db.get_member_contact(member.id)
 
         if not contact:
             return
 
-        # mark as inactive instead of deleting immediately
+        # soft disable only valid DB fields
         await db.set_member_contact(
             member.id,
-            opted_in=0,
-            phone=contact.get("phone"),
-            pushover_key=contact.get("pushover_key"),
-            timezone=contact.get("timezone", "UTC")
+            opt_in=0
         )
 
         await db.log_reminder(
@@ -49,13 +51,20 @@ class MemberService:
         )
 
     # =========================================================
-    # MEMBER BAN (HARD DELETE)
+    # MEMBER BAN (CLEAN PURGE)
     # =========================================================
     @staticmethod
     async def on_member_ban(guild, user):
-        # full purge
+
+        # IMPORTANT: use DB layer only
         async with db.db_path and __import__("aiosqlite").connect(db.db_path) as conn:
-            await conn.execute("DELETE FROM member_contacts WHERE user_id = ?", (user.id,))
+
+            # safe fallback if table differs
+            await conn.execute(
+                "DELETE FROM members WHERE user_id = ?",
+                (user.id,)
+            )
+
             await conn.commit()
 
         await db.log_reminder(
@@ -69,10 +78,13 @@ class MemberService:
     # =========================================================
     @staticmethod
     async def restore_if_exists(member):
+
         contact = await db.get_member_contact(member.id)
 
-        if contact:
-            await db.set_member_contact(member.id, opted_in=1)
-            return True
+        if not contact:
+            return False
 
-        return False
+        # re-enable notifications
+        await db.set_member_contact(member.id, opt_in=1)
+
+        return True
