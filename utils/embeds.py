@@ -1,9 +1,7 @@
 """
-=========================================================
- Evony Shield Watch
- Embed Templates (FINAL UNIFIED FORMAT LAYER)
- SINGLE EVENT LANGUAGE: SVS / KE ONLY
-=========================================================
+Evony Shield Watch
+Embed Templates (POLISHED UI LAYER)
+Clean + Fancy + Stable
 """
 
 import discord
@@ -12,7 +10,7 @@ import discord
 class Embeds:
 
     # =====================================================
-    # SHIELD ALERT (UNIFIED PHASE SYSTEM)
+    # SHIELD ALERTS
     # =====================================================
 
     @staticmethod
@@ -20,82 +18,56 @@ class Embeds:
 
         event_type = (event_type or "svs").lower()
 
-        # -------------------------------------------------
-        # SVS PURGE WARNING
-        # -------------------------------------------------
-
-        if event_type == "svs" and phase == "warning":
-
-            return discord.Embed(
-                title="🚨 SVS WARNING",
-                description=(
-                    "Server War (SVS) is approaching.\n\n"
-                    "🛡️ Prepare shields now.\n"
-                    "⏳ Avoid unnecessary exposure."
-                ),
-                color=0xff9900
-            )
-
-        # -------------------------------------------------
-        # SVS START
-        # -------------------------------------------------
-
-        if event_type == "svs" and phase == "start":
-
-            return discord.Embed(
-                title="🔥 SVS STARTED",
-                description=(
-                    "Server War is now LIVE.\n\n"
-                    "🛡️ Bubble immediately if not fighting.\n"
-                    "🚫 Avoid tiles & relics."
-                ),
-                color=0xff0000
-            )
-
-        # -------------------------------------------------
-        # KE WARNING
-        # -------------------------------------------------
-
-        if event_type == "ke" and phase == "warning":
-
-            return discord.Embed(
-                title="⚔️ KE WARNING",
-                description=(
-                    "Kill Event is approaching.\n\n"
-                    "🛡️ Prepare shields if needed.\n"
-                    "⚠️ Combat window opening soon."
-                ),
-                color=0xff9900
-            )
-
-        # -------------------------------------------------
-        # KE START
-        # -------------------------------------------------
-
-        if event_type == "ke" and phase == "start":
-
-            return discord.Embed(
-                title="🔥 KE STARTED",
-                description=(
-                    "Kill Event is now ACTIVE.\n\n"
-                    "🛡️ Bubble if required.\n"
-                    "⚔️ PvP is fully enabled."
-                ),
-                color=0x00cc66
-            )
-
-        # -------------------------------------------------
-        # DEFAULT FALLBACK
-        # -------------------------------------------------
-
-        return discord.Embed(
-            title=f"🛡️ {event_type.upper()} ALERT",
-            description="Event notification active.",
-            color=0x3498db
+        embed = discord.Embed(
+            color=0x2f3136
         )
 
+        if event_type == "svs" and phase == "warning":
+            embed.title = "🚨 SVS WARNING"
+            embed.description = (
+                "Server War is approaching.\n\n"
+                "🛡️ Activate shields soon\n"
+                "⏳ Prepare for hostilities"
+            )
+            embed.color = 0xffa500
+
+        elif event_type == "svs" and phase == "start":
+            embed.title = "🔥 SVS ACTIVE"
+            embed.description = (
+                "Server War has begun!\n\n"
+                "🛡️ Shield immediately if not fighting\n"
+                "⚔️ Avoid high-risk zones"
+            )
+            embed.color = 0xff3b30
+
+        elif event_type == "ke" and phase == "warning":
+            embed.title = "⚔️ KE WARNING"
+            embed.description = (
+                "Kill Event is approaching.\n\n"
+                "🛡️ Prepare shields if needed\n"
+                "⚠️ Combat window opening soon"
+            )
+            embed.color = 0xffa500
+
+        elif event_type == "ke" and phase == "start":
+            embed.title = "🔥 KE ACTIVE"
+            embed.description = (
+                "Kill Event is now LIVE.\n\n"
+                "⚔️ PvP enabled\n"
+                "🛡️ Stay protected if farming"
+            )
+            embed.color = 0x2ecc71
+
+        else:
+            embed.title = f"🛡️ {event_type.upper()} ALERT"
+            embed.description = "Event notification active."
+            embed.color = 0x3498db
+
+        embed.set_footer(text="Evony Shield Watch")
+        return embed
+
     # =====================================================
-    # EVENT START NOTICE (STATE ENTRY POINT)
+    # EVENT START
     # =====================================================
 
     @staticmethod
@@ -104,29 +76,28 @@ class Embeds:
         event_type = (event_type or "svs").lower()
 
         if event_type == "svs":
-
             return discord.Embed(
                 title="🔥 SVS HAS BEGUN",
                 description=(
                     "Server War is now active.\n\n"
-                    "🛡️ Maintain shield discipline.\n"
-                    "🚫 Avoid high-risk zones."
+                    "🛡️ Maintain shields\n"
+                    "⚔️ Stay alert"
                 ),
-                color=0xff0000
-            )
+                color=0xff3b30
+            ).set_footer(text="Evony Shield Watch")
 
         return discord.Embed(
             title="🔥 KE HAS BEGUN",
             description=(
                 "Kill Event is now active.\n\n"
-                "🛡️ Engage safely.\n"
-                "⚔️ PvP zones enabled."
+                "⚔️ PvP enabled\n"
+                "🛡️ Play smart"
             ),
-            color=0x00cc66
-        )
+            color=0x2ecc71
+        ).set_footer(text="Evony Shield Watch")
 
     # =====================================================
-    # CUSTOM EVENT CHECK-IN
+    # CUSTOM EVENT CHECKIN
     # =====================================================
 
     @staticmethod
@@ -138,27 +109,19 @@ class Embeds:
         cutoff: str
     ):
 
-        return discord.Embed(
+        embed = discord.Embed(
             title=f"📋 {event_name}",
-            description=f"{event_type.upper()} event check-in open.",
+            description=f"**{event_type.upper()} EVENT CHECK-IN OPEN**",
             color=0x3498db
-        ).add_field(
-            name="🕐 Start",
-            value=start_time,
-            inline=True
-        ).add_field(
-            name="👤 Coordinator",
-            value=coordinator,
-            inline=True
-        ).add_field(
-            name="⏳ Cutoff",
-            value=cutoff,
-            inline=False
-        ).add_field(
-            name="✅ Status",
-            value="React ✅ to join / ❌ to decline",
-            inline=False
         )
+
+        embed.add_field(name="🕐 Start Time", value=start_time, inline=True)
+        embed.add_field(name="👤 Coordinator", value=coordinator, inline=True)
+        embed.add_field(name="⏳ Cutoff", value=cutoff, inline=False)
+        embed.add_field(name="✅ Status", value="React ✅ / ❌ to respond", inline=False)
+
+        embed.set_footer(text="Evony Shield Watch")
+        return embed
 
     # =====================================================
     # EVENT ROSTER
@@ -184,6 +147,7 @@ class Embeds:
             inline=False
         )
 
+        embed.set_footer(text="Evony Shield Watch")
         return embed
 
     # =====================================================
@@ -195,24 +159,22 @@ class Embeds:
 
         return discord.Embed(
             title="📖 Evony Shield Watch",
-            description="Available commands",
+            description="Available Commands",
             color=0x34495e
         ).add_field(
             name="Setup",
-            value="/setup, /linktelegram",
+            value="/setup • /linktelegram",
             inline=False
         ).add_field(
             name="Events",
-            value="/event_create, /event_list",
-            inline=False
-        ).add_field(
-            name="Personal",
-            value="/mytime, /settimezone, /optout, /optin",
+            value="/event_create • /event_list",
             inline=False
         ).add_field(
             name="Utility",
-            value="/ping, /botinfo, /stats",
+            value="/ping • /botinfo • /stats",
             inline=False
-        ).set_footer(
-            text="Evony Shield Watch"
-        )
+        ).add_field(
+            name="Personal",
+            value="/mytime • /settimezone • /optin • /optout",
+            inline=False
+        ).set_footer(text="Evony Shield Watch")
