@@ -1,9 +1,9 @@
 """
-=========================================================
+
 Evony Shield Watch
 Reminders System (CLEAN EVENT PHASE ENGINE)
 Discord + Telegram (QUEUE SAFE)
-=========================================================
+
 """
 
 import discord
