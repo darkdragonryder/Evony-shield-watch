@@ -1,11 +1,11 @@
 """
-=========================================================
+
  Evony Shield Watch
  MAIN ENTRY POINT (PRODUCTION BOOTSTRAP)
  - Service init order controlled
  - No logic inside startup
  - Safe cog loading
-=========================================================
+
 """
 
 import discord
