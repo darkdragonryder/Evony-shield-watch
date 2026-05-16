@@ -1,6 +1,7 @@
 """
-Evony Shield Watch
-Telegram Bridge Service (HARDENED + PRODUCTION SAFE)
+=========================================================
+Telegram Service (HARDENED + SAFE START/STOP)
+=========================================================
 """
 
 import aiohttp
@@ -12,18 +13,13 @@ from config import Config
 class TelegramBotService:
 
     def __init__(self):
-
-        self.session: aiohttp.ClientSession | None = None
+        self.session = None
         self.running = False
-        self._lock = asyncio.Lock()
-
-    # =====================================================
-    # START
-    # =====================================================
+        self.lock = asyncio.Lock()
 
     async def start_async(self):
 
-        async with self._lock:
+        async with self.lock:
 
             if self.running:
                 return
@@ -33,43 +29,21 @@ class TelegramBotService:
 
             print("📲 Telegram service started")
 
-    # =====================================================
-    # STOP
-    # =====================================================
-
     async def stop_async(self):
 
-        async with self._lock:
+        async with self.lock:
 
             self.running = False
 
-            if self.session and not self.session.closed:
+            if self.session:
                 await self.session.close()
 
             self.session = None
 
-            print("📲 Telegram service stopped")
+    def is_ready(self):
+        return self.running and self.session
 
-    # =====================================================
-    # HEALTH CHECK
-    # =====================================================
-
-    def is_ready(self) -> bool:
-
-        return (
-            self.running
-            and self.session is not None
-            and not self.session.closed
-        )
-
-    # =====================================================
-    # SEND MESSAGE (HARDENED)
-    # =====================================================
-
-    async def send_message(self, chat_id: str, text: str, title: str = "Alert") -> bool:
-
-        if not Config.TELEGRAM_BOT_TOKEN:
-            return False
+    async def send_message(self, chat_id, text, title="Alert"):
 
         if not self.is_ready():
             return False
@@ -78,69 +52,19 @@ class TelegramBotService:
 
         payload = {
             "chat_id": chat_id,
-            "text": f"🛡️ {title}\n\n{text}",
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True
+            "text": f"🛡️ {title}\n\n{text}"
         }
 
         for attempt in range(3):
 
             try:
-
-                async with self.session.post(
-                    url,
-                    data=payload,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-
-                    # -------------------------------------------------
-                    # SUCCESS
-                    # -------------------------------------------------
-                    if resp.status == 200:
+                async with self.session.post(url, data=payload) as r:
+                    if r.status == 200:
                         return True
 
-                    body = await resp.text()
-
-                    # -------------------------------------------------
-                    # NON-RETRYABLE ERRORS
-                    # -------------------------------------------------
-                    if resp.status in (400, 401, 403, 404):
-                        logging.error(f"Telegram fatal error {resp.status}: {body}")
-                        return False
-
-                    # -------------------------------------------------
-                    # RATE LIMIT HANDLING
-                    # -------------------------------------------------
-                    if resp.status == 429:
-                        retry_after = resp.headers.get("Retry-After")
-
-                        wait_time = int(retry_after) if retry_after else 5
-
-                        logging.warning(f"Telegram rate limited, waiting {wait_time}s")
-                        await asyncio.sleep(wait_time)
-                        continue
-
-                    logging.warning(f"Telegram error {resp.status}: {body}")
-
-            except asyncio.TimeoutError:
-                logging.warning("Telegram timeout, retrying...")
-
             except Exception as e:
-                logging.error(f"Telegram exception: {e}")
+                logging.error(e)
 
-            await asyncio.sleep(2 * (attempt + 1))
+            await asyncio.sleep(2)
 
         return False
-
-    # =====================================================
-    # SAFE WRAPPER
-    # =====================================================
-
-    async def notify(self, chat_id: str, message: str, title: str = "Evony Alert"):
-
-        try:
-            return await self.send_message(chat_id, message, title)
-
-        except Exception as e:
-            logging.error(f"Telegram notify failed: {e}")
-            return False
