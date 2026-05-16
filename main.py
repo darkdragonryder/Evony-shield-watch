@@ -83,7 +83,6 @@ class EvonyBot(commands.Bot):
         await self.load_extension("cogs.members")
         await self.load_extension("cogs.reminders")
         await self.load_extension("cogs.custom_events")
-        await self.load_extension("cogs.telegram_bridge")
         await self.load_extension("cogs.admin")
 
 
