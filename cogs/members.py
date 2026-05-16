@@ -1,7 +1,7 @@
 """
 =========================================================
- Evony Shield Watch
- Member Lifecycle System (Multi-Guild Safe)
+Evony Shield Watch
+Member Lifecycle System (FIXED + DB ALIGNED)
 =========================================================
 """
 
@@ -12,43 +12,60 @@ from database import db
 
 class Members(commands.Cog):
 
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    # =====================================================
+    # MEMBER JOIN
+    # =====================================================
 
     @commands.Cog.listener()
-    async def on_member_join(self, member):
+    async def on_member_join(self, member: discord.Member):
 
         if member.bot:
             return
 
-        guild_id = member.guild.id
-
-        await db.set_member_contact(member.id, guild_id)
+        # FIX: correct DB usage (NO guild_id here)
+        await db.set_member_contact(member.id)
 
         try:
-            await member.send("🛡️ Welcome to Evony Shield Watch")
-        except:
+            await member.send(
+                "🛡️ Welcome to Evony Shield Watch\n"
+                "Use /help to get started."
+            )
+        except discord.Forbidden:
             pass
 
+    # =====================================================
+    # MEMBER REMOVE
+    # =====================================================
 
     @commands.Cog.listener()
-    async def on_member_remove(self, member):
+    async def on_member_remove(self, member: discord.Member):
 
         if member.bot:
             return
 
-        await db.delete_user_data(member.id, member.guild.id)
+        # FIX: correct function name
+        await db.delete_member_data(member.id)
 
+    # =====================================================
+    # MEMBER BAN
+    # =====================================================
 
     @commands.Cog.listener()
-    async def on_member_ban(self, guild, user):
+    async def on_member_ban(self, guild: discord.Guild, user: discord.User):
 
         if user.bot:
             return
 
-        await db.delete_user_data(user.id, guild.id)
+        # FIX: correct function name
+        await db.delete_member_data(user.id)
 
 
-async def setup(bot):
+# =========================================================
+# SETUP
+# =========================================================
+
+async def setup(bot: commands.Bot):
     await bot.add_cog(Members(bot))
