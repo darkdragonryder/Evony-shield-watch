@@ -1,178 +1,524 @@
 """
-SVS/KE Auto Rotation - Slash Commands
+=========================================================
+SVS / KE Auto Rotation & Reminder System
+Evony Shield Watch
+=========================================================
 """
+
+# =========================================================
+# IMPORTS
+# =========================================================
+
 import discord
+import pytz
+
 from discord.ext import commands
 from discord import app_commands
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+
 from datetime import datetime, timedelta
-import pytz
+
 from database import db
-from utils.time_utils import get_host_reset_time, get_user_local_reset_time, format_local_time, is_event_monday
-from utils.embeds import Embeds
 from config import Config
+from utils.embeds import Embeds
+
+
+# =========================================================
+# EVENTS COG
+# =========================================================
 
 class Events(commands.Cog):
-    def __init__(self, bot: commands.Bot):
+
+    def init(self, bot: commands.Bot):
+
         self.bot = bot
-        self.scheduler = AsyncIOScheduler()
-        self.scheduler.start()
+
+        # =====================================================
+        # SCHEDULER
+        # =====================================================
+
+        self.scheduler = AsyncIOScheduler(
+            timezone=pytz.timezone(Config.HOST_TIMEZONE)
+        )
+
         self._schedule_jobs()
-    
+
+        if not self.scheduler.running:
+            self.scheduler.start()
+
+    # =====================================================
+    # CLEANUP
+    # =====================================================
+
+    def cog_unload(self):
+
+        if self.scheduler.running:
+            self.scheduler.shutdown(wait=False)
+
+    # =====================================================
+    # SCHEDULE ALL JOBS
+    # =====================================================
+
     def _schedule_jobs(self):
-        # SVS: 1h39m before (3:21pm), purge 1h before (4pm), start 5pm
-        self.scheduler.add_job(self.svs_first_reminder, CronTrigger(day_of_week="fri", hour=15, minute=21), id="svs_first", replace_existing=True)
-        self.scheduler.add_job(self.svs_purge_reminder, CronTrigger(day_of_week="fri", hour=16, minute=0), id="svs_purge", replace_existing=True)
-        self.scheduler.add_job(self.svs_second_reminder, CronTrigger(day_of_week="fri", hour=16, minute=0), id="svs_second", replace_existing=True)
-        self.scheduler.add_job(self.event_start, CronTrigger(day_of_week="fri", hour=17, minute=0), id="svs_start", replace_existing=True)
-        
-        # KE: 1h before (4pm), start 5pm
-        self.scheduler.add_job(self.ke_reminder, CronTrigger(day_of_week="fri", hour=16, minute=0), id="ke_reminder", replace_existing=True)
-        self.scheduler.add_job(self.event_start, CronTrigger(day_of_week="fri", hour=17, minute=0), id="ke_start", replace_existing=True)
-        
-        # Monday rotation
-        self.scheduler.add_job(self.check_rotation, CronTrigger(day_of_week="mon", hour=0, minute=1), id="rotation", replace_existing=True)
-        
-        # Init new servers
-        self.scheduler.add_job(self.init_new_servers, CronTrigger(hour=0, minute=5), id="init_servers", replace_existing=True)
-    
-    async def init_new_servers(self):
-        for guild in self.bot.guilds:
-            schedule = await db.get_event_schedule(guild.id)
-            if not schedule:
-                await db.set_event_schedule(guild_id=guild.id, current_event=Config.SVS)
-    
+
+        reset_hour = Config.RESET_HOUR
+        reset_minute = Config.RESET_MINUTE
+
+        # -------------------------------------------------
+        # SVS REMINDER 1
+        # 1h39m before reset
+        # Example:
+        # Reset 5:00pm
+        # Fires 3:21pm
+        # -------------------------------------------------
+
+        first_hour = reset_hour - 2
+        first_minute = reset_minute + 21
+
+        if first_minute >= 60:
+            first_hour += 1
+            first_minute -= 60
+
+        self.scheduler.add_job(
+            self.svs_first_warning,
+            CronTrigger(
+                day_of_week="fri",
+                hour=first_hour,
+                minute=first_minute
+            ),
+            id="svs_first_warning",
+            replace_existing=True
+        )
+
+        # -------------------------------------------------
+        # SVS PURGE WARNING
+        # 1 hour before reset
+        # -------------------------------------------------
+
+        purge_hour = reset_hour - 1
+
+        self.scheduler.add_job(
+            self.svs_purge_warning,
+            CronTrigger(
+                day_of_week="fri",
+                hour=purge_hour,
+                minute=reset_minute
+            ),
+            id="svs_purge_warning",
+            replace_existing=True
+        )
+
+        # -------------------------------------------------
+        # KE WARNING
+        # 1 hour before reset
+        # -------------------------------------------------
+
+        self.scheduler.add_job(
+            self.ke_warning,
+            CronTrigger(
+                day_of_week="fri",
+                hour=purge_hour,
+                minute=reset_minute
+            ),
+            id="ke_warning",
+            replace_existing=True
+        )
+
+        # -------------------------------------------------
+        # EVENT START
+        # -------------------------------------------------
+
+        self.scheduler.add_job(
+            self.event_start,
+            CronTrigger(
+                day_of_week="fri",
+                hour=reset_hour,
+                minute=reset_minute
+            ),
+            id="event_start",
+            replace_existing=True
+        )
+
+        # -------------------------------------------------
+        # MONDAY ROTATION
+        # -------------------------------------------------
+
+        self.scheduler.add_job(
+            self.check_rotation,
+            CronTrigger(
+                day_of_week="mon",
+                hour=0,
+                minute=1
+            ),
+            id="rotation_check",
+            replace_existing=True
+        )
+
+    # =====================================================
+    # CHANNEL LOOKUP
+    # =====================================================
+
     async def _get_channels(self, guild_id: int):
+
         config = await db.get_server_config(guild_id)
+
         if not config:
             return None, None
+
         guild = self.bot.get_guild(guild_id)
+
         if not guild:
             return None, None
-        bubble = guild.get_channel(config.get("bubble_channel_id", 0))
-        battlefield = guild.get_channel(config.get("battlefield_channel_id", 0))
-        return bubble, battlefield
-    
-    async def _send_bubble_alert(self, guild_id: int, event_type: str, is_purge: bool = False):
-        """Send to bubble channel + PM all members with local times"""
-        bubble_ch, _ = await self._get_channels(guild_id)
-        if not bubble_ch:
+
+        bubble_channel = guild.get_channel(
+            config.get("bubble_channel_id", 0)
+        )
+
+        battlefield_channel = guild.get_channel(
+            config.get("battlefield_channel_id", 0)
+        )
+
+        return bubble_channel, battlefield_channel
+
+    # =====================================================
+    # SEND PERSONAL ALERTS
+    # =====================================================
+
+    async def _notify_members(
+        self,
+        guild: discord.Guild,
+        title: str,
+        message: str
+    ):
+
+        reminders = self.bot.get_cog("Reminders")
+
+        if not reminders:
             return
-        
-        guild = self.bot.get_guild(guild_id)
-        if not guild:
-            return
-        
-        # Server-wide bubble channel message
-        embed = Embeds.shield_alert(event_type, is_purge)
-        await bubble_ch.send("@everyone", embed=embed)
-        
-        # PM each member with their local time
+
         for member in guild.members:
+
             if member.bot:
                 continue
-            
-            contact = await db.get_member_contact(member.id)
-            user_tz = contact.get("timezone", "UTC") if contact else "UTC"
-            local_reset = get_user_local_reset_time(user_tz)
-            local_str = format_local_time(local_reset)
-            
-            if is_purge:
-                instruction = "🚨 **PURGE ATTACK IN 1 HOUR!** Put up your bubble NOW or join the fight!"
-            else:
-                instruction = f"🛡️ Put up your **bubble** if not participating in {event_type.upper()}!"
-            
-            pm_embed = Embeds.personal_reminder(event_type, local_str, instruction)
-            
+
             try:
-                await member.send(embed=pm_embed)
-                if not await db.has_bubble_reminder_today(guild_id, member.id, event_type):
-                    await db.track_bubble_reminder(guild_id, member.id, event_type)
-            except discord.Forbidden:
-                pass
+
+                await reminders.notify_member(
+                    member.id,
+                    message,
+                    title
+                )
+
             except Exception as e:
-                print(f"DM error {member.id}: {e}")
-    
-    async def svs_first_reminder(self):
+                print(f"Member notify failed: {member.id} | {e}")
+
+    # =====================================================
+    # SVS FIRST WARNING
+    # =====================================================
+
+    async def svs_first_warning(self):
+
         for guild in self.bot.guilds:
+
             schedule = await db.get_event_schedule(guild.id)
-            if schedule and schedule.get("current_event") == Config.SVS:
-                if not await db.was_reminder_sent_today(guild.id, Config.SVS, "first"):
-                    await self._send_bubble_alert(guild.id, Config.SVS)
-                    await db.log_reminder(guild.id, Config.SVS, "first")
-    
-    async def svs_purge_reminder(self):
-        for guild in self.bot.guilds:
-            schedule = await db.get_event_schedule(guild.id)
-            if schedule and schedule.get("current_event") == Config.SVS:
-                if not await db.was_reminder_sent_today(guild.id, Config.SVS, "purge"):
-                    await self._send_bubble_alert(guild.id, Config.SVS, is_purge=True)
-                    await db.log_reminder(guild.id, Config.SVS, "purge")
-    
-    async def svs_second_reminder(self):
-        for guild in self.bot.guilds:
-            schedule = await db.get_event_schedule(guild.id)
-            if schedule and schedule.get("current_event") == Config.SVS:
-                if not await db.was_reminder_sent_today(guild.id, Config.SVS, "second"):
-                    await self._send_bubble_alert(guild.id, Config.SVS)
-                    await db.log_reminder(guild.id, Config.SVS, "second")
-    
-    async def ke_reminder(self):
-        for guild in self.bot.guilds:
-            schedule = await db.get_event_schedule(guild.id)
-            if schedule and schedule.get("current_event") == Config.KE:
-                if not await db.was_reminder_sent_today(guild.id, Config.KE, "reminder"):
-                    await self._send_bubble_alert(guild.id, Config.KE)
-                    await db.log_reminder(guild.id, Config.KE, "reminder")
-    
-    async def event_start(self):
-        for guild in self.bot.guilds:
-            schedule = await db.get_event_schedule(guild.id)
+
             if not schedule:
                 continue
-            current = schedule.get("current_event", Config.SVS)
-            _, battlefield_ch = await self._get_channels(guild.id)
-            if battlefield_ch:
-                embed = Embeds.event_start_notice(current)
-                await battlefield_ch.send("@everyone", embed=embed)
-    
-    async def check_rotation(self):
-        for guild in self.bot.guilds:
-            schedule = await db.get_event_schedule(guild.id)
-            if not schedule:
+
+            if schedule.get("current_event") != Config.SVS:
                 continue
-            new_event = await db.rotate_event(guild.id)
-            _, battlefield_ch = await self._get_channels(guild.id)
-            if battlefield_ch:
+
+            bubble_channel, _ = await self._get_channels(guild.id)
+
+            if bubble_channel:
+
                 embed = discord.Embed(
-                    title="🔄 Event Rotation",
-                    description=f"Previous event ended. Next week: **{new_event.upper()}**",
+                    title="⚠️ SVS PURGE WARNING",
+                    description=(
+                        "🚨 Purge begins in 39 minutes.\n\n"
+                        "🛡️ Bubble now if you are not participating.\n\n"
+                        "⚔️ Prepare for Server War."
+                    ),
+                    color=0xf39c12
+                )
+
+                await bubble_channel.send(
+                    "@everyone",
+                    embed=embed
+                )
+
+            await self._notify_members(
+                guild,
+                "SVS Warning",
+                (
+                    "🚨 Purge begins in 39 minutes.\n\n"
+                    "🛡️ Bubble now if not participating."
+                )
+            )
+
+    # =====================================================
+    # SVS PURGE START
+    # =====================================================
+
+    async def svs_purge_warning(self):
+
+        for guild in self.bot.guilds:
+
+            schedule = await db.get_event_schedule(guild.id)
+
+            if not schedule:
+                continue
+
+            if schedule.get("current_event") != Config.SVS:
+                continue
+
+            bubble_channel, _ = await self._get_channels(guild.id)
+
+            if bubble_channel:
+
+                embed = discord.Embed(
+                    title="🚨 SVS PURGE STARTED",
+                    description=(
+                        "⚠️ Purge has officially started.\n\n"
+                        "🛡️ Bubble immediately.\n\n"
+                        "🔥 Attacks may now begin."
+                    ),
+                    color=0xe74c3c
+                )
+
+                await bubble_channel.send(
+                    "@everyone",
+                    embed=embed
+                )
+
+            await self._notify_members(
+                guild,
+                "SVS Purge Started",
+                (
+                    "🚨 Purge has started.\n\n"
+                    "🛡️ Bubble immediately."
+                )
+            )
+
+    # =====================================================
+    # KE WARNING
+    # =====================================================
+
+    async def ke_warning(self):
+
+        for guild in self.bot.guilds:
+
+            schedule = await db.get_event_schedule(guild.id)
+
+            if not schedule:
+                continue
+
+            if schedule.get("current_event") != Config.KE:
+                continue
+
+            bubble_channel, _ = await self._get_channels(guild.id)
+
+            if bubble_channel:
+
+                embed = discord.Embed(
+                    title="⚔️ KE STARTS IN 1 HOUR",
+                    description=(
+                        "🛡️ Bubble now.\n\n"
+                        "🌾 All tiles and relics are SAFE until reset."
+                    ),
+                    color=0xe67e22
+                )
+
+                await bubble_channel.send(
+                    "@everyone",
+                    embed=embed
+                )
+
+            await self._notify_members(
+                guild,
+                "KE Starts In 1 Hour",
+                (
+                    "🛡️ Bubble now.\n\n"
+                    "🌾 Tiles and relics remain safe until reset."
+                )
+            )
+
+    # =====================================================
+    # EVENT START
+    # =====================================================
+
+    async def event_start(self):
+
+        for guild in self.bot.guilds:
+
+            schedule = await db.get_event_schedule(guild.id)
+
+            if not schedule:
+                continue
+
+            current_event = schedule.get(
+                "current_event",
+                Config.SVS
+            )
+
+            _, battlefield_channel = await self._get_channels(guild.id)
+
+            if current_event == Config.SVS:
+
+                title = "🏰 SVS HAS STARTED"
+
+                description = (
+                    "🛡️ Bubble immediately.\n\n"
+                    "🚫 Stay out of ALL tiles and relics.\n\n"
+                    "⚔️ Enemy server attacks are now active."
+                )
+
+            else:
+
+                title = "⚔️ KE HAS STARTED"
+
+                description = (
+                    "🛡️ Bubble immediately.\n\n"
+                    "🌾 Tiles and relics are SAFE.\n\n"
+                    "⚔️ Kill Event is now active."
+                )
+
+            if battlefield_channel:
+
+                embed = discord.Embed(
+                    title=title,
+                    description=description,
+                    color=0xc0392b
+                )
+
+                await battlefield_channel.send(
+                    "@everyone",
+                    embed=embed
+                )
+
+            await self._notify_members(
+                guild,
+                title,
+                description
+            )
+
+    # =====================================================
+    # MONDAY EVENT ROTATION
+    # =====================================================
+
+    async def check_rotation(self):
+
+        for guild in self.bot.guilds:
+
+            schedule = await db.get_event_schedule(guild.id)
+
+            if not schedule:
+                continue
+
+            new_event = await db.rotate_event(guild.id)
+
+            _, battlefield_channel = await self._get_channels(guild.id)
+
+            if battlefield_channel:
+
+                embed = discord.Embed(
+                    title="🔄 Weekly Rotation",
+                    description=(
+                        f"Next Friday event:\n\n"
+                        f"{new_event.upper()}"
+                    ),
                     color=0x3498db
                 )
-                await battlefield_ch.send(embed=embed)
-    
-    # ========== SLASH COMMANDS ==========
-    
-    @app_commands.command(name="forceevent", description="Force set current event type")
+
+                await battlefield_channel.send(embed=embed)
+
+    # =====================================================
+    # FORCE EVENT
+    # =====================================================
+
+    @app_commands.command(
+        name="forceevent",
+        description="Force current event"
+    )
     @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(event_type="svs or ke")
+
     @app_commands.choices(event_type=[
         app_commands.Choice(name="SVS", value="svs"),
         app_commands.Choice(name="KE", value="ke")
     ])
-    async def slash_forceevent(self, interaction: discord.Interaction, event_type: app_commands.Choice[str]):
-        await db.set_event_schedule(guild_id=interaction.guild_id, current_event=event_type.value)
-        await interaction.response.send_message(f"✅ Current event forced to **{event_type.name}**", ephemeral=True)
-    
-    @app_commands.command(name="currentevent", description="Check this week's scheduled event")
-    async def slash_currentevent(self, interaction: discord.Interaction):
-        schedule = await db.get_event_schedule(interaction.guild_id)
+
+    async def forceevent(
+        self,
+        interaction: discord.Interaction,
+        event_type: app_commands.Choice[str]
+    ):
+
+        await db.set_event_schedule(
+            guild_id=interaction.guild_id,
+            current_event=event_type.value
+        )
+
+        await interaction.response.send_message(
+            f"✅ Event set to {event_type.name}",
+            ephemeral=True
+        )
+
+    # =====================================================
+    # CURRENT EVENT
+    # =====================================================
+
+    @app_commands.command(
+        name="currentevent",
+        description="Show current event"
+    )
+
+    async def currentevent(
+        self,
+        interaction: discord.Interaction
+    ):
+
+        schedule = await db.get_event_schedule(
+            interaction.guild_id
+        )
+
         if not schedule:
-            return await interaction.response.send_message("No schedule found.", ephemeral=True)
-        current = schedule.get("current_event", "Unknown")
-        next_date = schedule.get("next_event_date", "Unknown")
-        await interaction.response.send_message(f"Current: **{current.upper()}** | Next: {next_date}", ephemeral=True)
+
+            return await interaction.response.send_message(
+                "❌ No event configured.",
+                ephemeral=True
+            )
+
+        current = schedule.get("current_event", "unknown")
+        next_date = schedule.get("next_event_date", "unknown")
+
+        embed = discord.Embed(
+            title="📅 Current Event",
+            color=0x3498db
+        )
+
+        embed.add_field(
+            name="Current",
+            value=current.upper(),
+            inline=False
+        )
+
+        embed.add_field(
+            name="Next Event Date",
+            value=str(next_date),
+            inline=False
+        )
+
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
+
+
+# =========================================================
+# SETUP
+# =========================================================
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(Events(bot))
+    await bot.add_co
