@@ -1,7 +1,7 @@
 """
 =========================================================
 Evony Shield Watch
-Database Layer (STABLE - FULLY ALIGNED SYSTEM)
+Database Layer (STABLE - FIXED SCHEDULING CORE)
 =========================================================
 """
 
@@ -12,7 +12,7 @@ DB_PATH = "evony_bot.db"
 
 class Database:
 
-    def init(self):
+    def __init__(self):
         self.db_path = DB_PATH
 
     # =====================================================
@@ -34,7 +34,7 @@ class Database:
                 )
             """)
 
-            # TELEGRAM TOKENS
+            # TELEGRAM LINKS
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS telegram_links (
                     user_id INTEGER,
@@ -55,7 +55,18 @@ class Database:
                 )
             """)
 
-            # EVENT TRACKING (NEW - REQUIRED)
+            # =========================
+            # FIX: EVENT SCHEDULE TABLE
+            # =========================
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS event_schedule (
+                    guild_id INTEGER PRIMARY KEY,
+                    current_event TEXT,
+                    next_event_date TEXT
+                )
+            """)
+
+            # EVENT LOG (reminder spam control)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS event_log (
                     guild_id INTEGER,
@@ -66,7 +77,7 @@ class Database:
                 )
             """)
 
-            # BUBBLE TRACKING (NEW - PREVENT SPAM)
+            # BUBBLE LOG
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS bubble_log (
                     guild_id INTEGER,
@@ -88,7 +99,7 @@ class Database:
             await db.commit()
 
     # =====================================================
-    # MEMBER CONTACT
+    # MEMBER SYSTEM
     # =====================================================
 
     async def set_member_contact(self, user_id, **kwargs):
@@ -133,50 +144,6 @@ class Database:
                 "telegram_id": row[3],
                 "telegram_username": row[4],
             }
-
-    # =====================================================
-    # TELEGRAM
-    # =====================================================
-
-    async def create_telegram_link_token(self, user_id, token, expiry):
-
-        async with aiosqlite.connect(self.db_path) as db:
-
-            await db.execute("""
-                INSERT INTO telegram_links (user_id, token, expiry)
-                VALUES (?, ?, ?)
-            """, (user_id, token, expiry.isoformat()))
-
-            await db.commit()
-
-    async def link_telegram_user(self, token, telegram_id, username):
-
-        async with aiosqlite.connect(self.db_path) as db:
-
-            cursor = await db.execute("""
-                SELECT user_id FROM telegram_links WHERE token=?
-            """, (token,))
-
-            row = await cursor.fetchone()
-
-            if not row:
-                return False
-
-            user_id = row[0]
-
-            await db.execute("""
-                UPDATE members
-                SET telegram_id=?, telegram_username=?
-                WHERE user_id=?
-            """, (telegram_id, username, user_id))
-
-            await db.execute("""
-                DELETE FROM telegram_links WHERE token=?
-            """, (token,))
-
-            await db.commit()
-
-            return True
 
     # =====================================================
     # SERVER CONFIG
@@ -233,44 +200,63 @@ class Database:
             }
 
     # =====================================================
-    # EVENT SCHEDULING (REQUIRED FIX)
+    # FIXED EVENT SCHEDULING (REAL STORAGE)
     # =====================================================
 
     async def set_event_schedule(self, guild_id, current_event=None, next_event_date=None):
 
-        await self.set_server_config(
-            guild_id,
-            current_event=current_event
-        )
+        async with aiosqlite.connect(self.db_path) as db:
+
+            await db.execute("""
+                INSERT OR REPLACE INTO event_schedule
+                (guild_id, current_event, next_event_date)
+                VALUES (?, ?, ?)
+            """, (
+                guild_id,
+                current_event,
+                next_event_date.isoformat() if next_event_date else None
+            ))
+
+            await db.commit()
 
     async def get_event_schedule(self, guild_id):
 
-        config = await self.get_server_config(guild_id)
-        if not config:
-            return None
+        async with aiosqlite.connect(self.db_path) as db:
 
-        return {
-            "current_event": config.get("current_event"),
-            "next_event_date": None
-        }
+            cursor = await db.execute("""
+                SELECT guild_id, current_event, next_event_date
+                FROM event_schedule
+                WHERE guild_id=?
+            """, (guild_id,))
+
+            row = await cursor.fetchone()
+
+            if not row:
+                return None
+
+            return {
+                "guild_id": row[0],
+                "current_event": row[1],
+                "next_event_date": row[2]
+            }
 
     async def rotate_event(self, guild_id):
 
-        config = await self.get_server_config(guild_id)
-        if not config:
-            return "svs"
+        schedule = await self.get_event_schedule(guild_id)
 
-        new_event = "ke" if config["current_event"] == "svs" else "svs"
+        current = schedule["current_event"] if schedule else "svs"
+        new_event = "ke" if current == "svs" else "svs"
 
-        await self.set_server_config(
+        await self.set_event_schedule(
             guild_id,
-            current_event=new_event
+            current_event=new_event,
+            next_event_date=None
         )
 
         return new_event
 
     # =====================================================
-    # REMINDER LOGGING (FIXED)
+    # REMINDER LOGGING (UNCHANGED BUT SAFE)
     # =====================================================
 
     async def log_reminder(self, guild_id, event_type, reminder_type):
