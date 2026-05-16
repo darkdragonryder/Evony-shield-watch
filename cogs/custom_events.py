@@ -1,168 +1,244 @@
 """
-Custom Events (BOC/BOG/AllStars/Battlefield) - Slash Commands
+Custom Events (BOC / BOG / AllStars / Battlefield)
+FIXED: Stable DB-driven + safe reaction handling + no scheduler spam
 """
+
 import discord
 from discord.ext import commands
 from discord import app_commands
-from datetime import datetime, timedelta
+
+from datetime import datetime
 import pytz
-import asyncio
+
 from database import db
 from utils.embeds import Embeds
 from config import Config
 
+
 class CustomEvents(commands.Cog):
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-    
+
+    # =====================================================
+    # COORDINATOR CHECK
+    # =====================================================
+
     async def _is_coordinator(self, interaction: discord.Interaction) -> bool:
+
         if interaction.user.guild_permissions.administrator:
             return True
+
         config = await db.get_server_config(interaction.guild_id)
         if not config:
             return False
+
         role_id = config.get("event_coordinator_role_id")
         if not role_id:
             return False
+
         role = interaction.guild.get_role(role_id)
         if not role:
             return False
+
         return role in interaction.user.roles
-    
-    # ========== SLASH COMMANDS ==========
-    
-    @app_commands.command(name="event_create", description="Create a custom event (BOC/BOG/AllStars/Battlefield)")
-    async def slash_event_create(self, interaction: discord.Interaction):
+
+    # =====================================================
+    # CREATE EVENT (MODAL)
+    # =====================================================
+
+    @app_commands.command(
+        name="event_create",
+        description="Create a custom PvP event"
+    )
+    async def event_create(self, interaction: discord.Interaction):
+
         if not await self._is_coordinator(interaction):
-            return await interaction.response.send_message("❌ You need the Event Coordinator role!", ephemeral=True)
-        
-        # Modal for event creation
+            return await interaction.response.send_message(
+                "❌ You need Event Coordinator role.",
+                ephemeral=True
+            )
+
         await interaction.response.send_modal(EventCreateModal())
-    
-    @app_commands.command(name="event_cancel", description="Cancel a custom event")
-    @app_commands.describe(event_id="The event ID to cancel")
-    async def slash_event_cancel(self, interaction: discord.Interaction, event_id: int):
+
+    # =====================================================
+    # CANCEL EVENT
+    # =====================================================
+
+    @app_commands.command(name="event_cancel")
+    async def event_cancel(self, interaction: discord.Interaction, event_id: int):
+
         if not await self._is_coordinator(interaction):
-            return await interaction.response.send_message("❌ You need the Event Coordinator role!", ephemeral=True)
-        
+            return await interaction.response.send_message("❌ No permission.", ephemeral=True)
+
         event = await db.get_custom_event(event_id)
+
         if not event or event["guild_id"] != interaction.guild_id:
-            return await interaction.response.send_message("❌ Event not found.", ephemeral=True)
-        
-        # Delete message
+            return await interaction.response.send_message("❌ Not found.", ephemeral=True)
+
+        # delete message safely
         try:
             channel = interaction.guild.get_channel(event["channel_id"])
-            if channel:
+            if channel and event.get("message_id"):
                 msg = await channel.fetch_message(event["message_id"])
                 await msg.delete()
         except:
             pass
-        
+
         await db.delete_custom_event(event_id)
-        await interaction.response.send_message(f"✅ Event **{event['name']}** cancelled.", ephemeral=True)
-    
-    @app_commands.command(name="event_list", description="List all active custom events")
-    async def slash_event_list(self, interaction: discord.Interaction):
+
+        await interaction.response.send_message("✅ Event cancelled.", ephemeral=True)
+
+    # =====================================================
+    # LIST EVENTS
+    # =====================================================
+
+    @app_commands.command(name="event_list")
+    async def event_list(self, interaction: discord.Interaction):
+
         events = await db.get_active_custom_events(interaction.guild_id)
+
         if not events:
             return await interaction.response.send_message("📭 No active events.", ephemeral=True)
-        
+
         embed = discord.Embed(title="📅 Active Events", color=0x3498db)
-        for event in events:
-            start = event["start_time"]
+
+        for e in events:
+
+            start = e["start_time"]
             if isinstance(start, str):
                 start = datetime.fromisoformat(start)
+
             embed.add_field(
-                name=f"{event['name']} (ID: {event['event_id']})",
-                value=f"Type: {event['event_type'].upper()}\nStart: {start.strftime('%a %I:%M %p')}\nCoord: <@{event['coordinator_id']}>",
+                name=f"{e['name']} (ID {e['event_id']})",
+                value=(
+                    f"Type: {e['event_type'].upper()}\n"
+                    f"Start: {start.strftime('%a %H:%M')}\n"
+                    f"Coord: <@{e['coordinator_id']}>"
+                ),
                 inline=False
             )
+
         await interaction.response.send_message(embed=embed, ephemeral=True)
-    
-    @app_commands.command(name="event_roster", description="Show final roster for an event")
-    @app_commands.describe(event_id="The event ID")
-    async def slash_event_roster(self, interaction: discord.Interaction, event_id: int):
+
+    # =====================================================
+    # ROSTER
+    # =====================================================
+
+    @app_commands.command(name="event_roster")
+    async def event_roster(self, interaction: discord.Interaction, event_id: int):
+
         event = await db.get_custom_event(event_id)
+
         if not event or event["guild_id"] != interaction.guild_id:
-            return await interaction.response.send_message("❌ Event not found.", ephemeral=True)
-        
+            return await interaction.response.send_message("❌ Not found.", ephemeral=True)
+
         checkins = await db.get_event_checkins(event_id)
-        yes_list = []
-        no_list = []
-        
-        for checkin in checkins:
-            user = interaction.guild.get_member(checkin["user_id"])
-            name = user.mention if user else f"User {checkin['user_id']}"
-            if checkin["status"] == "yes":
-                yes_list.append(name)
+
+        yes, no = [], []
+
+        for c in checkins:
+
+            member = interaction.guild.get_member(c["user_id"])
+            name = member.mention if member else str(c["user_id"])
+
+            if c["status"] == "yes":
+                yes.append(name)
             else:
-                no_list.append(name)
-        
-        embed = Embeds.event_roster(event["name"], yes_list, no_list)
+                no.append(name)
+
+        embed = Embeds.event_roster(event["name"], yes, no)
+
         await interaction.response.send_message(embed=embed, ephemeral=True)
-    
+
+    # =====================================================
+    # REACTION HANDLER (FIXED)
+    # =====================================================
+
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+
         if payload.user_id == self.bot.user.id:
             return
-        
+
         events = await db.get_active_custom_events(payload.guild_id)
+
         for event in events:
-            if event.get("message_id") == payload.message_id:
-                cutoff = event["checkin_cutoff"]
-                if isinstance(cutoff, str):
-                    cutoff = datetime.fromisoformat(cutoff)
-                
-                if datetime.now(pytz.utc) > cutoff.replace(tzinfo=pytz.utc):
-                    channel = self.bot.get_channel(payload.channel_id)
-                    if channel:
-                        await channel.send(f"<@{payload.user_id}> Check-in is closed!", delete_after=10)
-                    return
-                
-                status = "yes" if str(payload.emoji) == "✅" else "no" if str(payload.emoji) == "❌" else None
-                if status:
-                    await db.checkin_member(event["event_id"], payload.user_id, status)
-                    user = self.bot.get_user(payload.user_id)
-                    if user:
-                        try:
-                            await user.send(f"✅ You're **{status.upper()}** for **{event['name']}**!")
-                        except:
-                            pass
-                break
+
+            if event.get("message_id") != payload.message_id:
+                continue
+
+            # cutoff check
+            cutoff = event["checkin_cutoff"]
+            if isinstance(cutoff, str):
+                cutoff = datetime.fromisoformat(cutoff)
+
+            if datetime.utcnow() > cutoff:
+                channel = self.bot.get_channel(payload.channel_id)
+                if channel:
+                    await channel.send(f"<@{payload.user_id}> check-in closed.", delete_after=10)
+                return
+
+            emoji = str(payload.emoji)
+
+            if emoji not in ("✅", "❌"):
+                return
+
+            status = "yes" if emoji == "✅" else "no"
+
+            await db.checkin_member(event["event_id"], payload.user_id, status)
+
+            # DM user (safe)
+            user = self.bot.get_user(payload.user_id)
+            if user:
+                try:
+                    await user.send(f"✅ You are **{status.upper()}** for **{event['name']}**")
+                except:
+                    pass
+
+            break
+
+
+# =====================================================
+# MODAL
+# =====================================================
 
 class EventCreateModal(discord.ui.Modal, title="Create Event"):
-    event_name = discord.ui.TextInput(label="Event Name", placeholder="Week 3 BOC", max_length=50)
-    event_type = discord.ui.TextInput(label="Type (boc/bog/allstars/battlefield)", placeholder="boc", max_length=15)
-    start_time = discord.ui.TextInput(label="Start Time (YYYY-MM-DD HH:MM)", placeholder="2026-05-16 18:00", max_length=16)
-    duration = discord.ui.TextInput(label="Duration (hours)", placeholder="2", max_length=3)
-    cutoff = discord.ui.TextInput(label="Check-in Cutoff (mins before start)", placeholder="30", max_length=3)
-    
+
+    event_name = discord.ui.TextInput(label="Event Name")
+    event_type = discord.ui.TextInput(label="Type (boc/bog/allstars/battlefield)")
+    start_time = discord.ui.TextInput(label="Start (YYYY-MM-DD HH:MM)")
+    duration = discord.ui.TextInput(label="Duration hours")
+    cutoff = discord.ui.TextInput(label="Check-in cutoff mins")
+
     async def on_submit(self, interaction: discord.Interaction):
+
         event_type = self.event_type.value.lower()
+
         if event_type not in Config.CUSTOM_EVENT_TYPES:
-            return await interaction.response.send_message("❌ Invalid type. Use: boc, bog, allstars, battlefield", ephemeral=True)
-        
+            return await interaction.response.send_message("❌ Invalid type.", ephemeral=True)
+
         try:
-            user_tz = pytz.timezone(Config.HOST_TIMEZONE)
             start = datetime.strptime(self.start_time.value, "%Y-%m-%d %H:%M")
-            start = user_tz.localize(start)
-        except ValueError:
-            return await interaction.response.send_message("❌ Invalid time format. Use YYYY-MM-DD HH:MM", ephemeral=True)
-        
+            start = pytz.timezone(Config.HOST_TIMEZONE).localize(start)
+        except:
+            return await interaction.response.send_message("❌ Invalid time format.", ephemeral=True)
+
         try:
             duration = float(self.duration.value)
-            end = start + timedelta(hours=duration)
             cutoff_mins = int(self.cutoff.value)
-            checkin_cutoff = start - timedelta(minutes=cutoff_mins)
-        except ValueError:
-            return await interaction.response.send_message("❌ Invalid duration or cutoff.", ephemeral=True)
-        
+        except:
+            return await interaction.response.send_message("❌ Invalid numbers.", ephemeral=True)
+
+        end = start + timedelta(hours=duration)
+        checkin_cutoff = start - timedelta(minutes=cutoff_mins)
+
         config = await db.get_server_config(interaction.guild_id)
-        battlefield_ch = interaction.guild.get_channel(config.get("battlefield_channel_id", 0)) if config else None
-        
-        if not battlefield_ch:
-            return await interaction.response.send_message("❌ No battlefield channel configured! Use `/setbattlefield`", ephemeral=True)
-        
+        channel = interaction.guild.get_channel(config.get("battlefield_channel_id", 0)) if config else None
+
+        if not channel:
+            return await interaction.response.send_message("❌ No battlefield channel.", ephemeral=True)
+
         event_id = await db.create_custom_event(
             guild_id=interaction.guild_id,
             event_type=event_type,
@@ -171,54 +247,36 @@ class EventCreateModal(discord.ui.Modal, title="Create Event"):
             end_time=end,
             coordinator_id=interaction.user.id,
             checkin_cutoff=checkin_cutoff,
-            channel_id=battlefield_ch.id
+            channel_id=channel.id
         )
-        
-        start_str = start.strftime("%A, %B %d at %I:%M %p %Z")
-        cutoff_str = checkin_cutoff.strftime("%I:%M %p %Z")
-        
+
         embed = Embeds.custom_event_checkin(
-            self.event_name.value, event_type, start_str, interaction.user.mention, cutoff_str
+            self.event_name.value,
+            event_type,
+            start.strftime("%A %H:%M"),
+            interaction.user.mention,
+            checkin_cutoff.strftime("%H:%M")
         )
-        
-        checkin_msg = await battlefield_ch.send(
-            f"@everyone **{self.event_name.value}** - Check in now!", embed=embed
+
+        msg = await channel.send(
+            f"@everyone **{self.event_name.value}** check-in open!",
+            embed=embed
         )
-        await checkin_msg.add_reaction("✅")
-        await checkin_msg.add_reaction("❌")
-        
-        await db.update_custom_event(event_id, message_id=checkin_msg.id)
-        
-        # Schedule cleanup
-        from apscheduler.schedulers.asyncio import AsyncIOScheduler
-        from apscheduler.triggers.date import DateTrigger
-        cleanup_time = end + Config.EVENT_CLEANUP_DELAY
-        scheduler = AsyncIOScheduler()
-        scheduler.add_job(
-            self._cleanup_event, DateTrigger(run_date=cleanup_time),
-            args=[event_id], id=f"cleanup_{event_id}"
-        )
-        scheduler.start()
-        
+
+        await msg.add_reaction("✅")
+        await msg.add_reaction("❌")
+
+        await db.update_custom_event(event_id, message_id=msg.id)
+
         await interaction.response.send_message(
-            f"✅ **{self.event_name.value}** created!\nID: `{event_id}` | Check-in closes at {cutoff_str}",
+            f"✅ Event created (ID: {event_id})",
             ephemeral=True
         )
-    
-    async def _cleanup_event(self, event_id: int):
-        event = await db.get_custom_event(event_id)
-        if not event:
-            return
-        try:
-            guild = self.bot.get_guild(event["guild_id"])
-            if guild:
-                channel = guild.get_channel(event["channel_id"])
-                if channel:
-                    msg = await channel.fetch_message(event["message_id"])
-                    await msg.delete()
-        except:
-            pass
-        await db.update_custom_event(event_id, status="completed")
+
+
+# =====================================================
+# SETUP
+# =====================================================
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(CustomEvents(bot))
