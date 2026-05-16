@@ -1,20 +1,11 @@
 """
-=========================================================
- Evony Shield Watch
- DATABASE CORE (HARDENED + CONSISTENT)
- - Single schema authority
- - Safe init on startup
- - No silent column mismatches
-=========================================================
+Evony Shield Watch
+DATABASE CORE (HARDENED + SAFE + CONSISTENT)
 """
 
 import aiosqlite
 from config import Config
 
-
-# =========================================================
-# DB CORE CLASS
-# =========================================================
 
 class Database:
 
@@ -23,26 +14,37 @@ class Database:
         self.db = None
 
     # =====================================================
-    # INIT
+    # INIT (SAFE GUARDED)
     # =====================================================
 
     async def init(self):
 
+        if self.db is not None:
+            return  # already initialized safely
+
         self.db = await aiosqlite.connect(self.db_path)
+        self.db.row_factory = aiosqlite.Row
+
         await self.db.execute("PRAGMA journal_mode=WAL;")
 
         await self._create_tables()
         await self.db.commit()
 
     # =====================================================
-    # TABLES (SINGLE SOURCE OF TRUTH)
+    # SAFE EXEC GUARD
+    # =====================================================
+
+    def _require_db(self):
+
+        if self.db is None:
+            raise RuntimeError("Database not initialized. Call db.init() first.")
+
+    # =====================================================
+    # TABLES
     # =====================================================
 
     async def _create_tables(self):
 
-        # -----------------------------
-        # MEMBERS
-        # -----------------------------
         await self.db.execute("""
         CREATE TABLE IF NOT EXISTS members (
             discord_id INTEGER PRIMARY KEY,
@@ -54,9 +56,6 @@ class Database:
         )
         """)
 
-        # -----------------------------
-        # SERVER CONFIG
-        # -----------------------------
         await self.db.execute("""
         CREATE TABLE IF NOT EXISTS server_config (
             guild_id INTEGER PRIMARY KEY,
@@ -67,9 +66,6 @@ class Database:
         )
         """)
 
-        # -----------------------------
-        # EVENT SCHEDULE
-        # -----------------------------
         await self.db.execute("""
         CREATE TABLE IF NOT EXISTS event_schedule (
             guild_id INTEGER PRIMARY KEY,
@@ -78,9 +74,6 @@ class Database:
         )
         """)
 
-        # -----------------------------
-        # CUSTOM EVENTS
-        # -----------------------------
         await self.db.execute("""
         CREATE TABLE IF NOT EXISTS custom_events (
             event_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,9 +89,6 @@ class Database:
         )
         """)
 
-        # -----------------------------
-        # TELEGRAM LINKS
-        # -----------------------------
         await self.db.execute("""
         CREATE TABLE IF NOT EXISTS telegram_links (
             token TEXT PRIMARY KEY,
@@ -108,11 +98,21 @@ class Database:
         )
         """)
 
-    # =========================================================
-    # MEMBER SAFE UPSERT (NO DRIFT)
-    # =========================================================
+    # =====================================================
+    # MEMBER UPSERT (SAFE)
+    # =====================================================
 
     async def set_member_contact(self, discord_id: int, **kwargs):
+
+        self._require_db()
+
+        if not kwargs:
+            await self.db.execute(
+                "INSERT OR IGNORE INTO members (discord_id) VALUES (?)",
+                (discord_id,)
+            )
+            await self.db.commit()
+            return
 
         fields = []
         values = []
@@ -127,16 +127,18 @@ class Database:
         INSERT INTO members (discord_id)
         VALUES (?)
         ON CONFLICT(discord_id)
-        DO UPDATE SET {", ".join(fields) if fields else "discord_id = discord_id"}
+        DO UPDATE SET {", ".join(fields)}
         """, values)
 
         await self.db.commit()
 
-    # =========================================================
+    # =====================================================
     # GET MEMBER
-    # =========================================================
+    # =====================================================
 
     async def get_member_contact(self, discord_id: int):
+
+        self._require_db()
 
         cursor = await self.db.execute("""
         SELECT * FROM members WHERE discord_id = ?
@@ -147,15 +149,23 @@ class Database:
         if not row:
             return None
 
-        cols = [c[0] for c in cursor.description]
+        return dict(row)
 
-        return dict(zip(cols, row))
-
-    # =========================================================
+    # =====================================================
     # SERVER CONFIG
-    # =========================================================
+    # =====================================================
 
     async def set_server_config(self, guild_id: int, **kwargs):
+
+        self._require_db()
+
+        if not kwargs:
+            await self.db.execute(
+                "INSERT OR IGNORE INTO server_config (guild_id) VALUES (?)",
+                (guild_id,)
+            )
+            await self.db.commit()
+            return
 
         fields = []
         values = []
@@ -170,16 +180,18 @@ class Database:
         INSERT INTO server_config (guild_id)
         VALUES (?)
         ON CONFLICT(guild_id)
-        DO UPDATE SET {", ".join(fields) if fields else "guild_id = guild_id"}
+        DO UPDATE SET {", ".join(fields)}
         """, values)
 
         await self.db.commit()
 
-    # =========================================================
+    # =====================================================
     # EVENT SCHEDULE
-    # =========================================================
+    # =====================================================
 
     async def set_event_schedule(self, guild_id: int, **kwargs):
+
+        self._require_db()
 
         fields = []
         values = []
@@ -194,16 +206,18 @@ class Database:
         INSERT INTO event_schedule (guild_id)
         VALUES (?)
         ON CONFLICT(guild_id)
-        DO UPDATE SET {", ".join(fields) if fields else "guild_id = guild_id"}
+        DO UPDATE SET {", ".join(fields)}
         """, values)
 
         await self.db.commit()
 
-    # =========================================================
-    # CUSTOM EVENTS (MINIMAL HELPERS)
-    # =========================================================
+    # =====================================================
+    # CUSTOM EVENTS
+    # =====================================================
 
     async def create_custom_event(self, **data):
+
+        self._require_db()
 
         cursor = await self.db.execute("""
         INSERT INTO custom_events (
@@ -228,6 +242,8 @@ class Database:
 
     async def get_custom_event(self, event_id: int):
 
+        self._require_db()
+
         cursor = await self.db.execute("""
         SELECT * FROM custom_events WHERE event_id = ?
         """, (event_id,))
@@ -237,5 +253,4 @@ class Database:
         if not row:
             return None
 
-        cols = [c[0] for c in cursor.description]
-        return dict(zip(cols, row))
+        return dict(row)
