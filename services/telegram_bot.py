@@ -1,9 +1,8 @@
 """
-=========================================================
+
  Evony Shield Watch
  Telegram Bot Service (HARDENED CORE TRANSPORT LAYER)
- SINGLE RESPONSIBILITY: SEND + SESSION MANAGEMENT
-=========================================================
+ SINGLE RESPONSIBILITY: SEND + SESSION MANAGEMENT=========================================================
 """
 
 import aiohttp
