@@ -1,7 +1,7 @@
 """
 =========================================================
- Evony Shield Watch - Server Setup & Channel Configuration
- Auto-starts on join with option to choose existing or create new channels
+Evony Shield Watch - Server Setup & Channel Configuration
+WEEK-BASED EVENT SYSTEM (SVS / KE ROTATION SAFE)
 =========================================================
 """
 
@@ -40,8 +40,7 @@ class Setup(commands.Cog):
             description=(
                 "Welcome! Let's configure your server.\n\n"
                 "**Step 1:** Choose your 🫧 bubble channel\n"
-                "All shield reminders will go here.\n\n"
-                "Click a button below:"
+                "All shield reminders will go here.\n"
             ),
             color=0x1abc9c
         )
@@ -51,9 +50,6 @@ class Setup(commands.Cog):
     @app_commands.command(name="setup", description="Manual setup wizard")
     @app_commands.checks.has_permissions(administrator=True)
     async def slash_setup(self, interaction: discord.Interaction):
-
-        if not interaction.guild:
-            return await interaction.response.send_message("❌ Guild only command.", ephemeral=True)
 
         await db.set_server_config(guild_id=interaction.guild_id)
 
@@ -81,9 +77,6 @@ class BubbleStepView(discord.ui.View):
 
     @discord.ui.button(label="Use Existing Channel", style=discord.ButtonStyle.secondary, emoji="📋")
     async def use_existing(self, interaction: discord.Interaction, button: discord.ui.Button):
-
-        if not interaction.guild:
-            return await interaction.response.send_message("❌ Guild not found.", ephemeral=True)
 
         await interaction.response.send_message(
             "Select a channel for bubble reminders:",
@@ -136,9 +129,6 @@ class BubbleStepView(discord.ui.View):
         await self._next_step(interaction)
 
     async def _next_step(self, interaction: discord.Interaction):
-
-        if not interaction.guild:
-            return
 
         embed = discord.Embed(
             title="Step 2/3: ⚔️ Battlefield Channel",
@@ -213,12 +203,9 @@ class BattlefieldStepView(discord.ui.View):
 
     async def _next_step(self, interaction: discord.Interaction):
 
-        if not interaction.guild:
-            return
-
         embed = discord.Embed(
-            title="Step 3/3: 🔄 First Event",
-            description="Which event is this Friday?",
+            title="Step 3/3: 🔄 Event for This Week",
+            description="Select the event active this Friday reset:",
             color=0x9b59b6
         )
 
@@ -226,15 +213,13 @@ class BattlefieldStepView(discord.ui.View):
 
 
 # =======================================================
-# CHANNEL SELECT (STABLE VERSION)
+# CHANNEL SELECT
 # =======================================================
 
 class ChannelSelectView(discord.ui.View):
 
     def __init__(self, step: str):
         super().__init__(timeout=300)
-        self.step = step
-
         self.add_item(ChannelSelect(step))
 
 
@@ -246,22 +231,13 @@ class ChannelSelect(discord.ui.ChannelSelect):
 
     async def callback(self, interaction: discord.Interaction):
 
-        if not self.values:
-            return await interaction.response.send_message("❌ No channel selected.", ephemeral=True)
-
         channel = self.values[0]
 
         if self.step == "bubble":
-            await db.set_server_config(
-                guild_id=interaction.guild_id,
-                bubble_channel_id=channel.id
-            )
+            await db.set_server_config(interaction.guild_id, bubble_channel_id=channel.id)
 
         elif self.step == "battlefield":
-            await db.set_server_config(
-                guild_id=interaction.guild_id,
-                battlefield_channel_id=channel.id
-            )
+            await db.set_server_config(interaction.guild_id, battlefield_channel_id=channel.id)
 
         await interaction.response.send_message(
             f"✅ Set to {channel.mention}",
@@ -270,7 +246,7 @@ class ChannelSelect(discord.ui.ChannelSelect):
 
 
 # =======================================================
-# STEP 3: EVENT SELECTION
+# STEP 3: EVENT SELECTION (WEEK ANCHORED)
 # =======================================================
 
 class EventStepView(discord.ui.View):
@@ -288,21 +264,19 @@ class EventStepView(discord.ui.View):
 
     async def _set(self, interaction, event_type, name):
 
-        if not interaction.guild:
-            return await interaction.response.send_message("❌ Guild missing.", ephemeral=True)
+        today = datetime.utcnow().date()
 
-        today = datetime.now().date()
-
+        # Anchor to upcoming Friday reset
         days_until_friday = (4 - today.weekday()) % 7
         if days_until_friday == 0:
             days_until_friday = 7
 
-        next_friday = today + timedelta(days=days_until_friday)
+        week_anchor = today + timedelta(days=days_until_friday)
 
         await db.set_event_schedule(
             guild_id=interaction.guild_id,
             current_event=event_type,
-            next_event_date=next_friday
+            week_start=week_anchor
         )
 
         await db.set_server_config(
@@ -311,7 +285,8 @@ class EventStepView(discord.ui.View):
         )
 
         await interaction.response.send_message(
-            f"✅ Setup complete: {name}",
+            f"✅ Setup complete: {name}\n"
+            f"Week anchored to next Friday reset.",
             ephemeral=True
         )
 
