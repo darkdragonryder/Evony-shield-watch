@@ -1,8 +1,8 @@
 """
-=========================================================
+
 Evony Shield Watch
 Member Lifecycle System (FIXED + DB ALIGNED)
-=========================================================
+
 """
 
 import discord
