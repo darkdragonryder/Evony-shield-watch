@@ -9,7 +9,7 @@ from config import Config
 
 class Database:
 
-    def __init__(self):
+    def init(self):
         self.db_path = Config.DB_PATH
         self.db = None
 
@@ -121,14 +121,12 @@ class Database:
             fields.append(f"{k} = ?")
             values.append(v)
 
-        values.append(discord_id)
-
         await self.db.execute(f"""
         INSERT INTO members (discord_id)
         VALUES (?)
         ON CONFLICT(discord_id)
         DO UPDATE SET {", ".join(fields)}
-        """, values)
+        """, [discord_id] + values)
 
         await self.db.commit()
 
@@ -174,14 +172,12 @@ class Database:
             fields.append(f"{k} = ?")
             values.append(v)
 
-        values.append(guild_id)
-
         await self.db.execute(f"""
         INSERT INTO server_config (guild_id)
         VALUES (?)
         ON CONFLICT(guild_id)
         DO UPDATE SET {", ".join(fields)}
-        """, values)
+        """, [guild_id] + values)
 
         await self.db.commit()
 
@@ -200,14 +196,12 @@ class Database:
             fields.append(f"{k} = ?")
             values.append(v)
 
-        values.append(guild_id)
-
         await self.db.execute(f"""
         INSERT INTO event_schedule (guild_id)
         VALUES (?)
         ON CONFLICT(guild_id)
         DO UPDATE SET {", ".join(fields)}
-        """, values)
+        """, [guild_id] + values)
 
         await self.db.commit()
 
@@ -219,34 +213,63 @@ class Database:
 
         self._require_db()
 
-        cursor = await self.db.execute("""
-        INSERT INTO custom_events (
-            guild_id, name, event_type, start_time,
-            end_time, coordinator_id, checkin_cutoff,
-            channel_id
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            data["guild_id"],
-            data["name"],
-            data["event_type"],
-            data["start_time"],
-            data["end_time"],
-            data["coordinator_id"],
-            data["checkin_cutoff"],
-            data["channel_id"]
-        ))
+        columns = ", ".join(data.keys())
+        placeholders = ", ".join(["?"] * len(data))
+        values = list(data.values())
+
+        cursor = await self.db.execute(f"""
+        INSERT INTO custom_events ({columns})
+        VALUES ({placeholders})
+        """, values)
 
         await self.db.commit()
+
         return cursor.lastrowid
 
-    async def get_custom_event(self, event_id: int):
+    async def get_custom_events(self, guild_id: int):
 
         self._require_db()
 
         cursor = await self.db.execute("""
-        SELECT * FROM custom_events WHERE event_id = ?
-        """, (event_id,))
+        SELECT * FROM custom_events
+        WHERE guild_id = ?
+        ORDER BY start_time ASC
+        """, (guild_id,))
+
+        rows = await cursor.fetchall()
+
+        return [dict(r) for r in rows]
+
+    # =====================================================
+    # TELEGRAM LINK TOKENS
+    # =====================================================
+
+    async def create_telegram_link(
+        self,
+        token,
+        discord_id,
+        guild_id,
+        expiry
+    ):
+
+        self._require_db()
+
+        await self.db.execute("""
+        INSERT INTO telegram_links
+        (token, discord_id, guild_id, expiry)
+        VALUES (?, ?, ?, ?)
+        """, (token, discord_id, guild_id, expiry))
+
+        await self.db.commit()
+
+    async def get_telegram_link(self, token):
+
+        self._require_db()
+
+        cursor = await self.db.execute("""
+        SELECT * FROM telegram_links
+        WHERE token = ?
+        """, (token,))
 
         row = await cursor.fetchone()
 
@@ -254,3 +277,31 @@ class Database:
             return None
 
         return dict(row)
+
+    async def delete_telegram_link(self, token):
+
+        self._require_db()
+
+        await self.db.execute("""
+        DELETE FROM telegram_links
+        WHERE token = ?
+        """, (token,))
+
+        await self.db.commit()
+
+    # =====================================================
+    # CLEAN CLOSE
+    # =====================================================
+
+    async def close(self):
+
+        if self.db:
+            await self.db.close()
+            self.db = None
+
+
+# =====================================================
+# GLOBAL DATABASE INSTANCE
+# =====================================================
+
+db = Database()
