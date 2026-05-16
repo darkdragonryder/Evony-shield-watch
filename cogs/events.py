@@ -1,8 +1,10 @@
 """
 =========================================================
  Evony Shield Watch
- Event System (STATE DRIVEN - NO DESYNC)
- Scheduler = TIMING ONLY / Engine = LOGIC
+ Events System (FINAL CLEAN ALIGNMENT)
+ - Scheduler = triggers only
+ - EventEngine = state only
+ - Embeds = display only
 =========================================================
 """
 
@@ -11,8 +13,8 @@ from discord.ext import commands
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from config import Config
 from database import db
+from config import Config
 from utils.embeds import Embeds
 from services.event_engine import EventEngine
 
@@ -28,15 +30,24 @@ class Events(commands.Cog):
         self._register_jobs()
 
     # =====================================================
-    # SCHEDULER (TIMING ONLY — NO GAME LOGIC HERE)
+    # SCHEDULER SETUP (NO BUSINESS LOGIC HERE)
     # =====================================================
 
     def _register_jobs(self):
 
-        # -------------------------------------------------
-        # 1 HOUR WARNING (ALL EVENTS)
-        # -------------------------------------------------
+        # -------------------------------
+        # SVS PURGE WARNING
+        # -------------------------------
+        self.scheduler.add_job(
+            self.svs_purge_warning,
+            CronTrigger(day_of_week="fri", hour=15, minute=21),
+            id="svs_purge_warning",
+            replace_existing=True
+        )
 
+        # -------------------------------
+        # GENERAL WARNING
+        # -------------------------------
         self.scheduler.add_job(
             self.general_warning,
             CronTrigger(day_of_week="fri", hour=16, minute=0),
@@ -44,10 +55,9 @@ class Events(commands.Cog):
             replace_existing=True
         )
 
-        # -------------------------------------------------
-        # EVENT START (RESET MOMENT)
-        # -------------------------------------------------
-
+        # -------------------------------
+        # EVENT START
+        # -------------------------------
         self.scheduler.add_job(
             self.event_start,
             CronTrigger(day_of_week="fri", hour=17, minute=0),
@@ -55,10 +65,9 @@ class Events(commands.Cog):
             replace_existing=True
         )
 
-        # -------------------------------------------------
-        # WEEK ROTATION (STATE ONLY CHANGE)
-        # -------------------------------------------------
-
+        # -------------------------------
+        # WEEK ROTATION
+        # -------------------------------
         self.scheduler.add_job(
             self.rotate_week,
             CronTrigger(day_of_week="fri", hour=17, minute=1),
@@ -67,21 +76,17 @@ class Events(commands.Cog):
         )
 
     # =====================================================
-    # GET EVENT (SAFE SINGLE SOURCE)
+    # SVS PURGE WARNING
     # =====================================================
 
-    async def get_event(self, guild_id: int):
-        return await EventEngine.get_current_event(guild_id)
-
-    # =====================================================
-    # GENERAL WARNING (SVS OR KE)
-    # =====================================================
-
-    async def general_warning(self):
+    async def svs_purge_warning(self):
 
         for guild in self.bot.guilds:
 
-            event = await self.get_event(guild.id)
+            event = await EventEngine.get_current_event(guild.id)
+
+            if event != Config.SVS:
+                continue
 
             config = await db.get_server_config(guild.id)
             if not config:
@@ -92,21 +97,48 @@ class Events(commands.Cog):
                 continue
 
             embed = Embeds.shield_alert(
-                event_type=event,
-                phase="warning"
+                event_type=Config.SVS,
+                phase="svs_purge_warning"
             )
 
             await channel.send("@everyone", embed=embed)
 
     # =====================================================
-    # EVENT START (REAL TIME STATE BASED)
+    # GENERAL WARNING
+    # =====================================================
+
+    async def general_warning(self):
+
+        for guild in self.bot.guilds:
+
+            event = await EventEngine.get_current_event(guild.id)
+
+            config = await db.get_server_config(guild.id)
+            if not config:
+                continue
+
+            channel = guild.get_channel(config.get("bubble_channel_id", 0))
+            if not channel:
+                continue
+
+            phase = "ke_warning" if event == Config.KE else "svs_warning"
+
+            embed = Embeds.shield_alert(
+                event_type=event,
+                phase=phase
+            )
+
+            await channel.send("@everyone", embed=embed)
+
+    # =====================================================
+    # EVENT START
     # =====================================================
 
     async def event_start(self):
 
         for guild in self.bot.guilds:
 
-            event = await self.get_event(guild.id)
+            event = await EventEngine.get_current_event(guild.id)
 
             config = await db.get_server_config(guild.id)
             if not config:
@@ -121,7 +153,7 @@ class Events(commands.Cog):
             await channel.send("@everyone", embed=embed)
 
     # =====================================================
-    # WEEK ROTATION (ONLY STATE CHANGE - NO LOGIC HERE)
+    # WEEK ROTATION (ONLY STATE CHANGE)
     # =====================================================
 
     async def rotate_week(self):
@@ -140,8 +172,12 @@ class Events(commands.Cog):
 
                 embed = discord.Embed(
                     title="🔄 Weekly Rotation",
-                    description=f"Next cycle: **{new_event.upper()}**",
+                    description=f"Next cycle event: **{new_event.upper()}**",
                     color=0x3498db
                 )
 
                 await channel.send(embed=embed)
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Events(bot))
