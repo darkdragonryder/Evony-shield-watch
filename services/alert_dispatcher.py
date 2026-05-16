@@ -1,15 +1,12 @@
 """
-=========================================================
- Evony Shield Watch
- Alert Dispatcher (Unified Notification Engine)
-=========================================================
+Evony Shield Watch
+Alert Dispatcher (Unified Notification Engine)
+Fixed + Multi-Guild Safe + Opt-in Aware
 """
 
 import discord
+import asyncio
 from database import db
-from services.role_service import RoleService
-
-roles = RoleService()
 
 
 class AlertDispatcher:
@@ -29,8 +26,11 @@ class AlertDispatcher:
             color=0xe74c3c
         )
 
+        failed = 0
+        sent = 0
+
         # -------------------------------------------------
-        # iterate members
+        # iterate members safely
         # -------------------------------------------------
 
         for member in guild.members:
@@ -38,15 +38,32 @@ class AlertDispatcher:
             if member.bot:
                 continue
 
-            user_role = await roles.get_role(member.id)
+            # DB ROLE (single source of truth)
+            role = await db.get_role(member.id)
 
-            if not self._allowed(user_role, min_role):
+            if not role:
+                role = "member"
+
+            if not self._allowed(role, min_role):
+                continue
+
+            # DB OPT-IN CHECK (CRITICAL FIX)
+            contact = await db.get_member_contact(member.id)
+            if contact and contact.get("opt_in", 1) == 0:
                 continue
 
             try:
                 await member.send(embed=embed)
+                sent += 1
+
             except discord.Forbidden:
-                pass
+                failed += 1
+
+            except discord.HTTPException:
+                failed += 1
+                await asyncio.sleep(0.5)  # small backoff
+
+        return {"sent": sent, "failed": failed}
 
     # =====================================================
     # ROLE FILTER
@@ -61,14 +78,15 @@ class AlertDispatcher:
             "owner": 3
         }
 
-        return hierarchy[user_role] >= hierarchy[min_role]
+        return hierarchy.get(user_role, 0) >= hierarchy.get(min_role, 0)
 
     # =====================================================
     # PRESET ALERT TYPES
     # =====================================================
 
     async def svs_alert(self, guild, message):
-        await self.send_alert(
+
+        return await self.send_alert(
             guild,
             "⚔️ SVS ALERT",
             message,
@@ -76,7 +94,8 @@ class AlertDispatcher:
         )
 
     async def ke_alert(self, guild, message):
-        await self.send_alert(
+
+        return await self.send_alert(
             guild,
             "🔥 KE ALERT",
             message,
@@ -84,7 +103,8 @@ class AlertDispatcher:
         )
 
     async def admin_alert(self, guild, message):
-        await self.send_alert(
+
+        return await self.send_alert(
             guild,
             "🛡️ ADMIN NOTICE",
             message,
