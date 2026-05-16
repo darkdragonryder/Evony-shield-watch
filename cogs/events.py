@@ -1,6 +1,6 @@
 """
-SVS/KE Auto Rotation - FIXED (Reset-Based System)
-Clean single-scheduler architecture
+SVS/KE Auto Rotation - FIXED (Proper Event Behavior)
+Stable reset-based system (production safe)
 """
 
 import discord
@@ -10,7 +10,6 @@ from apscheduler.triggers.cron import CronTrigger
 
 from database import db
 from config import Config
-from utils.embeds import Embeds
 
 
 class Events(commands.Cog):
@@ -23,28 +22,28 @@ class Events(commands.Cog):
         self._schedule_jobs()
 
     # =====================================================
-    # CORE SCHEDULER (ONLY 3 EVENTS)
+    # SCHEDULER (RESET BASED ONLY)
     # =====================================================
 
     def _schedule_jobs(self):
 
-        # 1) 1h 39m before reset → purge warning (SVS special)
+        # 1) 1h 39m before reset → SVS purge warning ONLY
         self.scheduler.add_job(
-            self.warning_39_min,
+            self.svs_purge_warning,
             CronTrigger(day_of_week="fri", hour=15, minute=21),
-            id="warning_39",
+            id="svs_purge",
             replace_existing=True
         )
 
-        # 2) 1 hour before reset → general warning
+        # 2) 1 hour before reset → main warning (SVS or KE depending week)
         self.scheduler.add_job(
-            self.warning_1_hour,
+            self.hour_warning,
             CronTrigger(day_of_week="fri", hour=16, minute=0),
-            id="warning_1h",
+            id="hour_warning",
             replace_existing=True
         )
 
-        # 3) RESET START → event begins
+        # 3) RESET START → event start message
         self.scheduler.add_job(
             self.reset_start,
             CronTrigger(day_of_week="fri", hour=17, minute=0),
@@ -52,24 +51,24 @@ class Events(commands.Cog):
             replace_existing=True
         )
 
-        # 4) WEEK ROTATION (AFTER RESET)
+        # 4) ROTATE AFTER RESET (SAFE DELAY)
         self.scheduler.add_job(
-            self.rotate_weekly_event,
-            CronTrigger(day_of_week="fri", hour=17, minute=1),
-            id="rotate_event",
+            self.rotate_event,
+            CronTrigger(day_of_week="fri", hour=17, minute=2),
+            id="rotate",
             replace_existing=True
         )
 
-        # 5) INIT NEW SERVERS
+        # 5) INIT SERVERS
         self.scheduler.add_job(
-            self.init_new_servers,
+            self.init_servers,
             CronTrigger(hour=0, minute=5),
             id="init_servers",
             replace_existing=True
         )
 
     # =====================================================
-    # EVENT STATE HELPERS
+    # HELPERS
     # =====================================================
 
     async def get_event(self, guild_id: int):
@@ -82,9 +81,12 @@ class Events(commands.Cog):
     # INIT SERVERS
     # =====================================================
 
-    async def init_new_servers(self):
+    async def init_servers(self):
+
         for guild in self.bot.guilds:
+
             schedule = await db.get_event_schedule(guild.id)
+
             if not schedule:
                 await db.set_event_schedule(
                     guild_id=guild.id,
@@ -92,15 +94,15 @@ class Events(commands.Cog):
                 )
 
     # =====================================================
-    # PHASE 1 - 39 MIN WARNING
+    # PHASE 1 - SVS PURGE WARNING ONLY
     # =====================================================
 
-    async def warning_39_min(self):
+    async def svs_purge_warning(self):
+
         for guild in self.bot.guilds:
 
             event = await self.get_event(guild.id)
 
-            # Only SVS uses purge warning
             if event != Config.SVS:
                 continue
 
@@ -112,15 +114,16 @@ class Events(commands.Cog):
             if not channel:
                 continue
 
-            embed = Embeds.shield_alert(event_type=Config.SVS, is_purge=True)
-
-            await channel.send("@everyone", embed=embed)
+            await channel.send(
+                "@everyone ⚔️ PURGE IN 39 MINUTES — PUT UP BUBBLE NOW!"
+            )
 
     # =====================================================
-    # PHASE 2 - 1 HOUR WARNING
+    # PHASE 2 - 1 HOUR WARNING (DIFFERENT MESSAGE BY EVENT)
     # =====================================================
 
-    async def warning_1_hour(self):
+    async def hour_warning(self):
+
         for guild in self.bot.guilds:
 
             event = await self.get_event(guild.id)
@@ -133,15 +136,19 @@ class Events(commands.Cog):
             if not channel:
                 continue
 
-            embed = Embeds.shield_alert(event_type=event, is_purge=False)
+            if event == Config.SVS:
+                msg = "🛡️ SVS IN 1 HOUR — Bubble up if not fighting!"
+            else:
+                msg = "⚔️ KE IN 1 HOUR — Bubble up, all tiles safe soon!"
 
-            await channel.send("@everyone", embed=embed)
+            await channel.send(f"@everyone {msg}")
 
     # =====================================================
-    # PHASE 3 - RESET START
+    # PHASE 3 - RESET START MESSAGE
     # =====================================================
 
     async def reset_start(self):
+
         for guild in self.bot.guilds:
 
             event = await self.get_event(guild.id)
@@ -150,19 +157,23 @@ class Events(commands.Cog):
             if not config:
                 continue
 
-            battlefield = guild.get_channel(config.get("battlefield_channel_id", 0))
-            if not battlefield:
+            channel = guild.get_channel(config.get("battlefield_channel_id", 0))
+            if not channel:
                 continue
 
-            embed = Embeds.event_start_notice(event)
+            if event == Config.SVS:
+                msg = "🔥 SVS STARTED — STAY BUBBLED OR FIGHT!"
+            else:
+                msg = "🔥 KE STARTED — ALL TILES & RELICS SAFE!"
 
-            await battlefield.send("@everyone", embed=embed)
+            await channel.send(f"@everyone {msg}")
 
     # =====================================================
-    # PHASE 4 - WEEK ROTATION
+    # PHASE 4 - ROTATION
     # =====================================================
 
-    async def rotate_weekly_event(self):
+    async def rotate_event(self):
+
         for guild in self.bot.guilds:
 
             schedule = await db.get_event_schedule(guild.id)
@@ -170,7 +181,6 @@ class Events(commands.Cog):
                 continue
 
             current = schedule.get("current_event", Config.SVS)
-
             new_event = Config.KE if current == Config.SVS else Config.SVS
 
             await db.set_event_schedule(
@@ -182,16 +192,12 @@ class Events(commands.Cog):
             if not config:
                 continue
 
-            battlefield = guild.get_channel(config.get("battlefield_channel_id", 0))
-            if battlefield:
+            channel = guild.get_channel(config.get("battlefield_channel_id", 0))
+            if channel:
 
-                embed = discord.Embed(
-                    title="🔄 Event Rotation",
-                    description=f"Next week event: **{new_event.upper()}**",
-                    color=0x3498db
+                await channel.send(
+                    f"🔄 Next week event set to **{new_event.upper()}**"
                 )
-
-                await battlefield.send(embed=embed)
 
 
 # =====================================================
