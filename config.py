@@ -1,8 +1,6 @@
 """
-=========================================================
 Evony Shield Watch Config
 CLEAN PRODUCTION VERSION (SVS / KE RESET SYSTEM)
-=========================================================
 """
 
 import os
