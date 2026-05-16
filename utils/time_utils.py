@@ -1,24 +1,18 @@
 """
 Timezone & Time Utilities
-FULL RESET-ALIGNED SYSTEM (SVS / KE WEEK TOGGLE READY)
+Stable + fallback-safe + Evony Shield Watch aligned
 """
 
 import pytz
 from datetime import datetime, timedelta
-
 from config import Config
 
 
 # =====================================================
-# HOST RESET TIME (SOURCE OF TRUTH)
+# HOST RESET (SOURCE OF TRUTH)
 # =====================================================
 
 def get_host_reset_time() -> datetime:
-    """
-    Returns next reset time in host timezone.
-    Used as anchor for ALL event timing.
-    """
-
     tz = pytz.timezone(Config.HOST_TIMEZONE)
     now = datetime.now(tz)
 
@@ -29,22 +23,27 @@ def get_host_reset_time() -> datetime:
         microsecond=0
     )
 
-    if reset < now:
+    if reset <= now:
         reset += timedelta(days=1)
 
     return reset
 
 
 # =====================================================
-# TIMEZONE CONVERSION
+# SAFE TIMEZONE CONVERSION
 # =====================================================
 
 def convert_to_local_time(dt: datetime, user_timezone: str) -> datetime:
 
+    try:
+        tz = pytz.timezone(user_timezone or "UTC")
+    except Exception:
+        tz = pytz.timezone("UTC")
+
     if dt.tzinfo is None:
         dt = pytz.utc.localize(dt)
 
-    return dt.astimezone(pytz.timezone(user_timezone))
+    return dt.astimezone(tz)
 
 
 # =====================================================
@@ -52,27 +51,19 @@ def convert_to_local_time(dt: datetime, user_timezone: str) -> datetime:
 # =====================================================
 
 def get_user_local_reset_time(user_timezone: str) -> datetime:
-    return convert_to_local_time(
-        get_host_reset_time(),
-        user_timezone
-    )
+    return convert_to_local_time(get_host_reset_time(), user_timezone)
 
 
 # =====================================================
-# FORMAT DISPLAY TIME
+# FORMATTER (HUMAN READABLE)
 # =====================================================
 
 def format_local_time(dt: datetime) -> str:
-    return dt.strftime("%A, %B %d at %I:%M %p %Z")
+    return dt.strftime("%A, %d %B %Y • %I:%M %p (%Z)")
 
 
 # =====================================================
-# SVS TIMING (FIXED LOGIC)
-# =====================================================
-# RULES:
-# - 1h 39m before reset → purge warning
-# - 1h before reset → general warning
-# - reset → SVS starts
+# SVS TIMERS
 # =====================================================
 
 def get_svs_purge_time():
@@ -84,11 +75,7 @@ def get_svs_warning_time():
 
 
 # =====================================================
-# KE TIMING (FIXED LOGIC)
-# =====================================================
-# RULES:
-# - 1h before reset → KE warning
-# - reset → KE starts
+# KE TIMERS
 # =====================================================
 
 def get_ke_warning_time():
@@ -96,18 +83,14 @@ def get_ke_warning_time():
 
 
 # =====================================================
-# WEEK TYPE HELPERS (OPTIONAL SAFE USE)
+# SAFE HELPERS
 # =====================================================
 
 def is_friday_reset_window() -> bool:
-    """
-    Used only if you ever need sanity checks.
-    Not used for core logic anymore.
-    """
     now = datetime.now(pytz.timezone(Config.HOST_TIMEZONE))
-    return now.weekday() == 4  # Friday
+    return now.weekday() == 4
 
 
 def is_monday_reset_window() -> bool:
     now = datetime.now(pytz.timezone(Config.HOST_TIMEZONE))
-    return now.weekday() == 0  # Monday
+    return now.weekday() == 0
