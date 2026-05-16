@@ -1,7 +1,8 @@
 """
 =========================================================
  Evony Shield Watch
- Reminders System (Discord + Telegram + SMS optional removed)
+ Reminders System
+ Discord + Telegram Notifications
 =========================================================
 """
 
@@ -10,18 +11,21 @@
 # =========================================================
 
 import discord
+import aiohttp
+import pytz
+
+from datetime import datetime, UTC
+
 from discord.ext import commands
 from discord import app_commands
 
-import aiohttp
-import asyncio
-from datetime import datetime
-
-import pytz
-
 from config import Config
 from database import db
-from utils.time_utils import get_user_local_reset_time, format_local_time
+
+from utils.time_utils import (
+    get_user_local_reset_time,
+    format_local_time
+)
 
 
 # =========================================================
@@ -36,84 +40,127 @@ class Reminders(commands.Cog):
         self.session = aiohttp.ClientSession()
 
     # =====================================================
-    # CLEANUP SESSION
+    # CLEANUP
     # =====================================================
 
-    def cog_unload(self):
-        self.bot.loop.create_task(self.session.close())
+    async def cog_unload(self):
+
+        if not self.session.closed:
+            await self.session.close()
 
     # =====================================================
     # TELEGRAM SENDER
     # =====================================================
 
-    async def _send_telegram(self, telegram_id: str, message: str, title: str):
+    async def _send_telegram(
+        self,
+        telegram_id: str,
+        message: str,
+        title: str
+    ) -> bool:
 
-        if not Config.has_telegram():
+        if not Config.TELEGRAM_BOT_TOKEN:
             return False
 
         try:
-            url = f"https://api.telegram.org/bot{Config.TELEGRAM_BOT_TOKEN}/sendMessage"
+
+            url = (
+                f"https://api.telegram.org/bot"
+                f"{Config.TELEGRAM_BOT_TOKEN}/sendMessage"
+            )
 
             payload = {
                 "chat_id": telegram_id,
-                "text": f"🛡️ {title}\n\n{message}",
+                "text": (
+                    f"🛡️ <b>{title}</b>\n\n"
+                    f"{message}"
+                ),
                 "parse_mode": "HTML"
             }
 
-            async with self.session.post(url, data=payload) as resp:
-                return resp.status == 200
+            async with self.session.post(
+                url,
+                data=payload
+            ) as response:
+
+                return response.status == 200
 
         except Exception as e:
-            print(f"Telegram error: {e}")
+
+            print(f"[Telegram ERROR] {e}")
             return False
 
     # =====================================================
     # MAIN NOTIFICATION ENGINE
     # =====================================================
 
-    async def notify_member(self, user_id: int, message: str, title: str = "Evony Alert"):
+    async def notify_member(
+        self,
+        user_id: int,
+        message: str,
+        title: str = "Evony Alert"
+    ):
 
         contact = await db.get_member_contact(user_id)
 
         if not contact:
-            return
+            return {
+                "discord": False,
+                "telegram": False
+            }
 
         results = {
             "discord": False,
             "telegram": False
         }
 
-        user = self.bot.get_user(user_id)
-
-        # -------------------------------------------------
+        # =================================================
         # DISCORD DM
-        # -------------------------------------------------
+        # =================================================
 
-        if user and contact.get("discord_opt_in", 1):
+        discord_enabled = contact.get(
+            "discord_opt_in",
+            1
+        )
+
+        if discord_enabled:
 
             try:
+
+                user = self.bot.get_user(user_id)
+
+                if not user:
+                    user = await self.bot.fetch_user(user_id)
 
                 embed = discord.Embed(
                     title=title,
                     description=message,
-                    color=0xFF0000,
-                    timestamp=datetime.utcnow()
+                    color=0xE74C3C,
+                    timestamp=datetime.now(UTC)
+                )
+
+                embed.set_footer(
+                    text="Evony Shield Watch"
                 )
 
                 await user.send(embed=embed)
+
                 results["discord"] = True
 
-            except:
-                pass
+            except Exception as e:
 
-        # -------------------------------------------------
-        # TELEGRAM DM
-        # -------------------------------------------------
+                print(f"[Discord DM ERROR] {e}")
 
-        if contact.get("telegram_id"):
+        # =================================================
+        # TELEGRAM
+        # =================================================
+
+        telegram_id = contact.get("telegram_id")
+
+        if telegram_id:
 
             results["telegram"] = await self._send_telegram(
-                contact["telegram_id"],
+                telegram_id,
                 message,
                 title
             )
@@ -121,32 +168,55 @@ class Reminders(commands.Cog):
         return results
 
     # =====================================================
-    # SLASH COMMANDS
+    # MY TIME
     # =====================================================
 
     @app_commands.command(
         name="mytime",
-        description="Check your local reset time"
+        description="Check your local server reset time"
     )
-    async def mytime(self, interaction: discord.Interaction):
+    async def mytime(
+        self,
+        interaction: discord.Interaction
+    ):
 
-        contact = await db.get_member_contact(interaction.user.id)
+        contact = await db.get_member_contact(
+            interaction.user.id
+        )
 
-        tz = contact.get("timezone", "UTC") if contact else "UTC"
+        timezone = "UTC"
 
-        local = get_user_local_reset_time(tz)
+        if contact:
+            timezone = contact.get(
+                "timezone",
+                "UTC"
+            )
 
-        formatted = format_local_time(local)
+        local_time = get_user_local_reset_time(
+            timezone
+        )
+
+        formatted = format_local_time(local_time)
 
         embed = discord.Embed(
             title="⏰ Your Local Reset Time",
-            description=f"Server reset converts to:\n\n**{formatted}**",
+            description=(
+                "Server reset converts to:\n\n"
+                f"**{formatted}**"
+            ),
             color=0x3498db
         )
 
-        embed.add_field(name="Timezone", value=tz, inline=False)
+        embed.add_field(
+            name="🌍 Timezone",
+            value=timezone,
+            inline=False
+        )
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
 
     # =====================================================
     # SET TIMEZONE
@@ -179,7 +249,13 @@ class Reminders(commands.Cog):
         except pytz.UnknownTimeZoneError:
 
             await interaction.response.send_message(
-                "❌ Invalid timezone (e.g. Europe/London, Asia/Tokyo)",
+                (
+                    "❌ Invalid timezone.\n\n"
+                    "Example:\n"
+                    "`Australia/Sydney`\n"
+                    "`Europe/London`\n"
+                    "`America/New_York`"
+                ),
                 ephemeral=True
             )
 
@@ -191,7 +267,10 @@ class Reminders(commands.Cog):
         name="optout",
         description="Disable Discord notifications"
     )
-    async def optout(self, interaction: discord.Interaction):
+    async def optout(
+        self,
+        interaction: discord.Interaction
+    ):
 
         await db.set_member_contact(
             interaction.user.id,
@@ -211,7 +290,10 @@ class Reminders(commands.Cog):
         name="optin",
         description="Enable Discord notifications"
     )
-    async def optin(self, interaction: discord.Interaction):
+    async def optin(
+        self,
+        interaction: discord.Interaction
+    ):
 
         await db.set_member_contact(
             interaction.user.id,
@@ -219,38 +301,49 @@ class Reminders(commands.Cog):
         )
 
         await interaction.response.send_message(
-            "🔔 Notifications re-enabled.",
+            "🔔 Discord notifications enabled.",
             ephemeral=True
         )
 
     # =====================================================
-    # TEST NOTIFICATIONS
+    # TEST NOTIFICATION
     # =====================================================
 
     @app_commands.command(
         name="testnotify",
-        description="Test Discord + Telegram alerts"
+        description="Test notifications"
     )
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.checks.has_permissions(
+        administrator=True
+    )
     async def testnotify(
         self,
         interaction: discord.Interaction,
         user: discord.Member
     ):
 
+        await interaction.response.defer(
+            ephemeral=True
+        )
+
         results = await self.notify_member(
             user.id,
-            "This is a test notification from Evony Shield Watch.",
-            "Test Alert"
+            (
+                "This is a test notification from "
+                "Evony Shield Watch."
+            ),
+            "🧪 Test Alert"
         )
 
-        msg = (
-            f"📨 Discord: {'✅' if results['discord'] else '❌'}\n"
-            f"📲 Telegram: {'✅' if results['telegram'] else '❌'}"
+        message = (
+            f"📨 Discord: "
+            f"{'✅' if results['discord'] else '❌'}\n"
+            f"📲 Telegram: "
+            f"{'✅' if results['telegram'] else '❌'}"
         )
 
-        await interaction.response.send_message(
-            msg,
+        await interaction.followup.send(
+            message,
             ephemeral=True
         )
 
@@ -260,4 +353,5 @@ class Reminders(commands.Cog):
 # =========================================================
 
 async def setup(bot: commands.Bot):
+
     await bot.add_cog(Reminders(bot))
