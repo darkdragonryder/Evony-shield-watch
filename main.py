@@ -1,7 +1,10 @@
 """
 =========================================================
 Evony Shield Watch
-Main Entry Point (STABLE ORCHESTRATION LAYER)
+MAIN ENTRY POINT (FINAL ORCHESTRATION CORE)
+- SINGLE EVENT PIPELINE
+- NO DUPLICATE LISTENERS
+- SAFE STARTUP ORDER
 =========================================================
 """
 
@@ -17,7 +20,7 @@ from services.telegram_bot import TelegramBotService
 
 
 # =========================================================
-# LOAD ENV
+# ENV LOAD
 # =========================================================
 
 load_dotenv()
@@ -30,7 +33,6 @@ load_dotenv()
 intents = discord.Intents.default()
 intents.members = True
 intents.guilds = True
-intents.reactions = True
 intents.message_content = True
 
 
@@ -48,181 +50,221 @@ class ShieldWatchBot(commands.Bot):
             help_command=None
         )
 
-        # SINGLE Telegram instance (source of truth)
+        # SINGLE TELEGRAM INSTANCE
         self.telegram = TelegramBotService()
+        self.telegram_task = None
 
-        self._telegram_started = False
+        # PREVENT DOUBLE INIT
+        self._ready_once = False
 
     # =====================================================
-    # SETUP HOOK
+    # STARTUP HOOK (ORDER IS CRITICAL)
     # =====================================================
 
     async def setup_hook(self):
 
-        print("\n================ DATABASE ================\n")
+        print("\n=================================================")
+        print(" DATABASE INIT")
+        print("=================================================\n")
 
         await db.init()
-        print("✅ Database ready")
 
-        # ---------------- COGS ----------------
+        # -------------------------------------------------
+        # LOAD COGS (ORDERED PIPELINE)
+        # -------------------------------------------------
+
         cogs = [
+
+            # CORE SYSTEMS FIRST
             "cogs.setup",
             "cogs.events",
-            "cogs.custom_events",
+
+            # MEMBER + LIFECYCLE
+            "cogs.members",
+
+            # FEATURES
             "cogs.reminders",
+            "cogs.custom_events",
             "cogs.admin",
+
         ]
 
-        print("\n================ COGS ================\n")
+        print("\n=================================================")
+        print(" LOADING COGS")
+        print("=================================================\n")
 
         for cog in cogs:
-
             try:
                 await self.load_extension(cog)
                 print(f"✅ Loaded {cog}")
-
             except Exception as e:
                 print(f"❌ Failed {cog}: {e}")
 
-        # ---------------- SYNC ----------------
-        print("\n================ SLASH SYNC ================\n")
+        # -------------------------------------------------
+        # SYNC SLASH COMMANDS
+        # -------------------------------------------------
 
         try:
             synced = await self.tree.sync()
             print(f"✅ Synced {len(synced)} commands")
-
         except Exception as e:
             print(f"❌ Slash sync failed: {e}")
 
     # =====================================================
-    # READY EVENT
+    # READY EVENT (SAFE SINGLE RUN)
     # =====================================================
 
     async def on_ready(self):
 
-        print("\n================ ONLINE ================\n")
+        if self._ready_once:
+            return
 
-        print(f"🛡️ Bot: {self.user}")
-        print(f"📊 Servers: {len(self.guilds)}")
+        self._ready_once = True
 
-        # ---------------- PRESENCE ----------------
-        try:
-            await self.change_presence(
-                activity=discord.Activity(
-                    type=discord.ActivityType.watching,
-                    name="SVS / KE | /help"
+        print("\n=================================================")
+        print(" BOT ONLINE")
+        print("=================================================\n")
+
+        print(f"Logged in as: {self.user}")
+        print(f"Servers: {len(self.guilds)}")
+
+        # -------------------------------------------------
+        # PRESENCE
+        # -------------------------------------------------
+
+        await self.change_presence(
+            activity=discord.Activity(
+                type=discord.ActivityType.watching,
+                name="SVS / KE Events | /help"
+            )
+        )
+
+        # -------------------------------------------------
+        # TELEGRAM START (ONLY ONCE)
+        # -------------------------------------------------
+
+        if not self.telegram_task:
+
+            self.telegram_task = asyncio.create_task(
+                self.telegram.start_async()
+            )
+
+            print("📲 Telegram started")
+
+        # -------------------------------------------------
+        # ENSURE GUILD SETUP EXISTS
+        # (THIS FIXES LATE INSTALL / SATURDAY INSTALL ISSUE)
+        # -------------------------------------------------
+
+        await self._ensure_guilds_ready()
+
+    # =====================================================
+    # AUTO GUILD INITIALISATION (CRITICAL FIX)
+    # =====================================================
+
+    async def _ensure_guilds_ready(self):
+
+        for guild in self.guilds:
+
+            config = await db.get_server_config(guild.id)
+
+            # IF FIRST TIME INSTALL OR MISSING SETUP
+            if not config or not config.get("setup_complete"):
+
+                print(f"🛠️ Auto-initialising guild: {guild.name}")
+
+                await db.set_server_config(
+                    guild_id=guild.id,
+                    setup_complete=0
                 )
-            )
-        except:
-            pass
 
-        # ---------------- TELEGRAM START ----------------
-        if not self._telegram_started:
-
-            print("\n================ TELEGRAM ================\n")
-
-            try:
-
-                await self.telegram.start_async()
-                self._telegram_started = True
-
-                print("✅ Telegram started safely")
-
-            except Exception as e:
-                print(f"❌ Telegram failed: {e}")
+                # trigger setup flow automatically
+                # (safe: only sends message, no duplication risk)
+                await self._send_setup_prompt(guild)
 
     # =====================================================
-    # GUILD JOIN
+    # AUTO SETUP PROMPT
     # =====================================================
 
-    async def on_guild_join(self, guild):
+    async def _send_setup_prompt(self, guild: discord.Guild):
 
-        print(f"➕ Joined {guild.name}")
+        channel = next(
+            (c for c in guild.text_channels
+             if c.permissions_for(guild.me).send_messages),
+            None
+        )
 
-        await db.set_server_config(guild.id)
-
-    # =====================================================
-    # MEMBER JOIN
-    # =====================================================
-
-    async def on_member_join(self, member):
-
-        if member.bot:
+        if not channel:
             return
 
-        try:
+        embed = discord.Embed(
+            title="🛡️ Evony Shield Watch Setup Required",
+            description=(
+                "Welcome to Shield Watch.\n\n"
+                "Run `/setup` to configure:\n"
+                "• Bubble channel\n"
+                "• Battlefield channel\n"
+                "• Current event (SVS / KE)\n\n"
+                "⚠️ This is required before alerts activate."
+            ),
+            color=0x1abc9c
+        )
 
-            embed = discord.Embed(
-                title="🛡️ Welcome to Evony Shield Watch",
-                description=(
-                    "Get SVS / KE alerts and bubble reminders.\n\n"
-                    "Use `/settimezone` to configure your local time."
-                ),
-                color=0x3498db
-            )
-
-            await member.send(embed=embed)
-
-        except:
-            pass
-
-    # =====================================================
-    # MEMBER CLEANUP
-    # =====================================================
-
-    async def on_member_remove(self, member):
-
-        if member.bot:
-            return
-
-        await db.delete_member_data(member.id)
+        await channel.send(embed=embed)
 
     # =====================================================
-    # SAFE SHUTDOWN
+    # CLEAN SHUTDOWN
     # =====================================================
 
     async def close(self):
 
-        print("\n================ SHUTDOWN ================\n")
+        print("\n=================================================")
+        print(" SHUTTING DOWN")
+        print("=================================================\n")
 
         try:
-
             await self.telegram.stop_async()
+        except:
+            pass
 
-        except Exception as e:
-            print(f"Telegram shutdown warning: {e}")
+        if self.telegram_task:
+            self.telegram_task.cancel()
 
         await super().close()
 
 
 # =========================================================
-# ERROR HANDLER
+# BOT INSTANCE
 # =========================================================
 
-@commands.Cog.listener()
-async def on_app_command_error(interaction, error):
+bot = ShieldWatchBot()
+
+
+# =========================================================
+# GLOBAL ERROR HANDLER
+# =========================================================
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error):
+
+    print("❌ COMMAND ERROR:", error)
 
     try:
-
-        if interaction.response.is_done():
-            return
-
-        await interaction.response.send_message(
-            "❌ Error occurred.",
-            ephemeral=True
-        )
-
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "❌ Error occurred.",
+                ephemeral=True
+            )
     except:
         pass
 
 
 # =========================================================
-# RUNNER
+# MAIN
 # =========================================================
 
 async def main():
-
-    async with ShieldWatchBot() as bot:
+    async with bot:
         await bot.start(Config.TOKEN)
 
 
