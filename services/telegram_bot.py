@@ -1,143 +1,170 @@
 """
 =========================================================
- Telegram Bot Service (Polling Mode)
- Clean Stable Runner - Evony Shield Watch
+Evony Shield Watch
+Telegram Bot Service (STABLE + SAFE + NON-BLOCKING)
 =========================================================
 """
 
-from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-)
+import aiohttp
+import asyncio
+import logging
 
 from config import Config
-from services.telegram_service import TelegramService
 
 
 class TelegramBotService:
 
     def __init__(self):
 
-        # =====================================================
-        # APPLICATION SETUP
-        # =====================================================
-        self.app = (
-            Application.builder()
-            .token(Config.TELEGRAM_BOT_TOKEN)
-            .build()
-        )
+        self.session = None
+        self.running = False
+        self.base_url = None
 
-        self.bridge = TelegramService()
+        # simple outbound queue to prevent spam bursts
+        self.queue = asyncio.Queue()
 
-        # Handlers
-        self.app.add_handler(CommandHandler("start", self.start))
-
-        # State tracking (VERY IMPORTANT FOR VM STABILITY)
-        self._running = False
-        self._task = None
+        self.worker_task = None
 
     # =====================================================
-    # START COMMAND (/start)
+    # STARTUP
     # =====================================================
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-        if not update.message:
-            return
-
-        user = update.effective_user
-        if not user:
-            await update.message.reply_text("❌ User not found.")
-            return
-
-        telegram_id = str(user.id)
-        username = user.username or user.first_name
-
-        token = context.args[0] if context.args else None
-
-        if not token:
-            await update.message.reply_text(
-                "❌ Missing token.\nUse /linktelegram in Discord first."
-            )
-            return
-
-        try:
-            result = await self.bridge.handle_start(
-                telegram_id,
-                username,
-                token
-            )
-
-            await update.message.reply_text(result)
-
-        except Exception as e:
-            print(f"[Telegram ERROR] {e}")
-            await update.message.reply_text(
-                "❌ Telegram linking failed. Try again later."
-            )
-
-    # =====================================================
-    # START BOT (SAFE VM-PROOF VERSION)
-    # =====================================================
     async def start_async(self):
 
-        if self._running:
-            print("⚠️ Telegram already running - ignoring duplicate start")
+        if not Config.has_telegram():
+            print("⚠️ Telegram disabled (no token)")
             return
 
-        self._running = True
+        if self.running:
+            return
 
-        print("\n=================================================")
-        print("📱 STARTING TELEGRAM BOT")
-        print("=================================================\n")
+        self.session = aiohttp.ClientSession()
 
-        try:
-            # SAFE INIT FLOW (PTB v20+ correct order)
-            await self.app.initialize()
-            await self.app.start()
+        self.base_url = f"https://api.telegram.org/bot{Config.TELEGRAM_BOT_TOKEN}"
 
-            # Polling runs as background task safely
-            self._task = await self.app.updater.start_polling()
+        self.running = True
 
-            print("✅ Telegram bot running")
+        # start worker
+        self.worker_task = asyncio.create_task(self._worker())
 
-        except Exception as e:
-            self._running = False
-            print(f"❌ Telegram failed to start: {e}")
+        print("✅ Telegram service started")
 
     # =====================================================
-    # STOP BOT (SAFE CLEAN SHUTDOWN)
+    # STOP
     # =====================================================
+
     async def stop_async(self):
 
-        if not self._running:
-            return
+        self.running = False
 
-        print("\n🛑 Stopping Telegram bot...")
+        # stop worker
+        if self.worker_task:
+            self.worker_task.cancel()
+
+        # close session safely
+        if self.session:
+            await self.session.close()
+
+        print("🛑 Telegram service stopped")
+
+    # =====================================================
+    # PUBLIC SEND METHOD (SAFE ENTRY POINT)
+    # =====================================================
+
+    async def send_message(self, chat_id: str, text: str, title: str = None):
+
+        if not Config.has_telegram():
+            return False
+
+        if not self.running:
+            return False
+
+        message = text
+
+        if title:
+            message = f"🛡️ {title}\n\n{text}"
+
+        await self.queue.put((chat_id, message))
+
+        return True
+
+    # =====================================================
+    # WORKER LOOP (PREVENTS RATE LIMIT + CRASHES)
+    # =====================================================
+
+    async def _worker(self):
+
+        while self.running:
+
+            try:
+
+                chat_id, message = await self.queue.get()
+
+                await self._send_raw(chat_id, message)
+
+                await asyncio.sleep(0.2)  # soft rate limit buffer
+
+            except asyncio.CancelledError:
+                break
+
+            except Exception as e:
+                print(f"Telegram worker error: {e}")
+
+    # =====================================================
+    # RAW SEND (ACTUAL API CALL)
+    # =====================================================
+
+    async def _send_raw(self, chat_id: str, message: str):
+
+        if not self.session:
+            return False
 
         try:
-            if self.app.updater:
-                await self.app.updater.stop()
 
-            await self.app.stop()
-            await self.app.shutdown()
+            payload = {
+                "chat_id": chat_id,
+                "text": message,
+                "parse_mode": "HTML"
+            }
+
+            async with self.session.post(
+                f"{self.base_url}/sendMessage",
+                data=payload,
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+
+                if resp.status != 200:
+                    text = await resp.text()
+                    print(f"Telegram API error: {resp.status} {text}")
+                    return False
+
+                return True
+
+        except asyncio.TimeoutError:
+            print("Telegram timeout")
+            return False
 
         except Exception as e:
-            print(f"⚠️ Telegram shutdown warning: {e}")
-
-        self._running = False
-        self._task = None
-
-        print("✅ Telegram bot stopped cleanly")
+            print(f"Telegram send error: {e}")
+            return False
 
     # =====================================================
-    # OPTIONAL: BLOCKING RUN (ONLY FOR LOCAL TESTING)
+    # HEALTH CHECK
     # =====================================================
-    def run(self):
 
-        print("\n=================================================")
-        print("📱 TELEGRAM BOT STARTING (STANDALONE)")
-        print("=================================================\n")
+    async def is_alive(self):
 
-        self.app.run_polling()
+        if not self.session:
+            return False
+
+        try:
+
+            async with self.session.get(
+                f"{self.base_url}/getMe",
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
+
+                return resp.status == 200
+
+        except:
+            return False
