@@ -9,7 +9,7 @@ from config import Config
 
 class Database:
 
-    def init(self):
+    def __init__(self):
         self.db_path = Config.DB_PATH
         self.db = None
 
