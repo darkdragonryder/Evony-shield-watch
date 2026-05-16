@@ -1,6 +1,9 @@
 """
-SVS/KE Auto Rotation - FINAL RESET-TOGGLE SYSTEM
-Fully aligned with event_week_toggle (DB source of truth)
+=========================================================
+Evony Shield Watch
+SVS / KE Event Engine (STATE-DRIVEN SYSTEM)
+NO DESYNC - NO CRON RELIANCE FOR LOGIC
+=========================================================
 """
 
 import discord
@@ -16,6 +19,7 @@ from utils.embeds import Embeds
 class Events(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
+
         self.bot = bot
         self.scheduler = AsyncIOScheduler()
         self.scheduler.start()
@@ -23,43 +27,13 @@ class Events(commands.Cog):
         self._register_jobs()
 
     # =====================================================
-    # EVENT RESOLUTION (SOURCE OF TRUTH)
-    # =====================================================
-
-    async def get_current_event(self, guild_id: int) -> str:
-        """
-        Returns SVS or KE based on DB toggle.
-        """
-        config = await db.get_server_config(guild_id)
-        if not config:
-            return Config.SVS
-
-        toggle = config.get("event_week_toggle", 0)
-
-        return Config.SVS if toggle == 1 else Config.KE
-
-    # =====================================================
-    # INIT NEW SERVERS
-    # =====================================================
-
-    async def init_new_servers(self):
-        for guild in self.bot.guilds:
-            config = await db.get_server_config(guild.id)
-            if not config:
-                await db.set_server_config(
-                    guild_id=guild.id,
-                    current_event=Config.SVS,
-                    event_week_toggle=0
-                )
-
-    # =====================================================
-    # SCHEDULER SETUP (ONLY RESET EVENTS)
+    # JOB REGISTRATION (TIMING ONLY, NO GAME LOGIC)
     # =====================================================
 
     def _register_jobs(self):
 
         # -------------------------------------------------
-        # FRIDAY 15:21 → SVS PURGE WARNING (ONLY IF SVS WEEK)
+        # 39 MIN WARNING (SVS ONLY)
         # -------------------------------------------------
         self.scheduler.add_job(
             self.svs_purge_warning,
@@ -69,64 +43,84 @@ class Events(commands.Cog):
         )
 
         # -------------------------------------------------
-        # FRIDAY 16:00 → 1 HOUR WARNING (ALL EVENTS)
+        # 1 HOUR WARNING (SVS + KE)
         # -------------------------------------------------
         self.scheduler.add_job(
-            self.hour_warning,
+            self.general_warning,
             CronTrigger(day_of_week="fri", hour=16, minute=0),
-            id="fri_hour_warning",
+            id="general_warning",
             replace_existing=True
         )
 
         # -------------------------------------------------
-        # MONDAY 16:00 → 1 HOUR WARNING (ALL EVENTS)
+        # RESET START (EVENT BEGINS)
         # -------------------------------------------------
         self.scheduler.add_job(
-            self.hour_warning,
-            CronTrigger(day_of_week="mon", hour=16, minute=0),
-            id="mon_hour_warning",
-            replace_existing=True
-        )
-
-        # -------------------------------------------------
-        # FRIDAY RESET START → EVENT START + FLIP
-        # -------------------------------------------------
-        self.scheduler.add_job(
-            self.reset_start,
+            self.event_start,
             CronTrigger(day_of_week="fri", hour=17, minute=0),
-            id="fri_reset_start",
+            id="event_start",
             replace_existing=True
         )
 
         # -------------------------------------------------
-        # MONDAY RESET START → EVENT START + FLIP
+        # WEEK ROTATION (STATE CHANGE ONLY)
         # -------------------------------------------------
         self.scheduler.add_job(
-            self.reset_start,
-            CronTrigger(day_of_week="mon", hour=17, minute=0),
-            id="mon_reset_start",
+            self.rotate_event_week,
+            CronTrigger(day_of_week="fri", hour=17, minute=1),
+            id="rotate_week",
             replace_existing=True
         )
 
         # -------------------------------------------------
-        # SERVER INIT
+        # INIT SERVERS
         # -------------------------------------------------
         self.scheduler.add_job(
-            self.init_new_servers,
+            self.init_servers,
             CronTrigger(hour=0, minute=5),
             id="init_servers",
             replace_existing=True
         )
 
     # =====================================================
-    # WARNING: SVS PURGE ONLY
+    # EVENT STATE (SOURCE OF TRUTH)
+    # =====================================================
+
+    async def get_event(self, guild_id: int):
+
+        schedule = await db.get_event_schedule(guild_id)
+
+        if not schedule:
+            return Config.SVS
+
+        return schedule.get("current_event", Config.SVS)
+
+    # =====================================================
+    # INIT SERVERS
+    # =====================================================
+
+    async def init_servers(self):
+
+        for guild in self.bot.guilds:
+
+            schedule = await db.get_event_schedule(guild.id)
+
+            if not schedule:
+
+                await db.set_event_schedule(
+                    guild_id=guild.id,
+                    current_event=Config.SVS
+                )
+
+    # =====================================================
+    # PHASE 1 - SVS PURGE WARNING ONLY
     # =====================================================
 
     async def svs_purge_warning(self):
 
         for guild in self.bot.guilds:
 
-            event = await self.get_current_event(guild.id)
+            event = await self.get_event(guild.id)
 
             if event != Config.SVS:
                 continue
@@ -147,14 +141,14 @@ class Events(commands.Cog):
             await channel.send("@everyone", embed=embed)
 
     # =====================================================
-    # WARNING: 1 HOUR (ALL EVENTS)
+    # PHASE 2 - GENERAL WARNING (SVS OR KE)
     # =====================================================
 
-    async def hour_warning(self):
+    async def general_warning(self):
 
         for guild in self.bot.guilds:
 
-            event = await self.get_current_event(guild.id)
+            event = await self.get_event(guild.id)
 
             config = await db.get_server_config(guild.id)
             if not config:
@@ -172,54 +166,65 @@ class Events(commands.Cog):
             await channel.send("@everyone", embed=embed)
 
     # =====================================================
-    # RESET START + FLIP WEEK
+    # PHASE 3 - EVENT START (RESET MOMENT)
     # =====================================================
 
-    async def reset_start(self):
+    async def event_start(self):
 
         for guild in self.bot.guilds:
+
+            event = await self.get_event(guild.id)
 
             config = await db.get_server_config(guild.id)
             if not config:
                 continue
 
-            event = await self.get_current_event(guild.id)
+            channel = guild.get_channel(config.get("battlefield_channel_id", 0))
+            if not channel:
+                continue
 
-            battlefield = guild.get_channel(
-                config.get("battlefield_channel_id", 0)
-            )
+            embed = Embeds.event_start_notice(event)
 
-            # -------------------------------------------------
-            # EVENT START MESSAGE
-            # -------------------------------------------------
-            if battlefield:
-                embed = Embeds.event_start_notice(event)
-                await battlefield.send("@everyone", embed=embed)
+            await channel.send("@everyone", embed=embed)
 
-            # -------------------------------------------------
-            # FLIP WEEK (IMPORTANT)
-            # -------------------------------------------------
-            current_toggle = config.get("event_week_toggle", 0)
-            new_toggle = 1 - int(current_toggle)
+    # =====================================================
+    # PHASE 4 - WEEK ROTATION (CRITICAL STATE CHANGE)
+    # =====================================================
 
-            await db.set_server_config(
+    async def rotate_event_week(self):
+
+        for guild in self.bot.guilds:
+
+            schedule = await db.get_event_schedule(guild.id)
+            if not schedule:
+                continue
+
+            current = schedule.get("current_event", Config.SVS)
+
+            # STRICT TOGGLE RULE (NO DRIFT POSSIBLE)
+            new_event = Config.KE if current == Config.SVS else Config.SVS
+
+            await db.set_event_schedule(
                 guild_id=guild.id,
-                event_week_toggle=new_toggle
+                current_event=new_event
             )
 
-            # -------------------------------------------------
-            # LOG NEW STATE
-            # -------------------------------------------------
-            print(
-                f"[EVENT FLIP] Guild {guild.id} "
-                f"Toggle {current_toggle} → {new_toggle} "
-                f"(Now {'SVS' if new_toggle == 1 else 'KE'})"
-            )
+            config = await db.get_server_config(guild.id)
+            if not config:
+                continue
 
+            channel = guild.get_channel(config.get("battlefield_channel_id", 0))
 
-# =====================================================
-# SETUP
-# =====================================================
+            if channel:
+
+                embed = discord.Embed(
+                    title="🔄 Weekly Event Rotation",
+                    description=f"Next week event is now: **{new_event.upper()}**",
+                    color=0x3498db
+                )
+
+                await channel.send(embed=embed)
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Events(bot))
