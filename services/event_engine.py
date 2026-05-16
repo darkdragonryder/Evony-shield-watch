@@ -1,9 +1,8 @@
 """
-=========================================================
  Evony Shield Watch
  Event Engine (SINGLE SOURCE OF TRUTH)
  NO SCHEDULER LOGIC — PURE STATE ENGINE ONLY
-=========================================================
+
 """
 
 from database import db
