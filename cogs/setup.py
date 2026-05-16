@@ -1,8 +1,10 @@
 """
 =========================================================
  Evony Shield Watch
- Server Setup System (AUTO + MANUAL SAFE)
- SMART EVENT DETECTION (KE / SVS WEEK CYCLE)
+ Setup System (FINAL INTEGRATION FIX)
+ - Auto setup on join
+ - Manual setup wizard
+ - EventEngine driven (NO LOCAL LOGIC)
 =========================================================
 """
 
@@ -11,13 +13,13 @@ from discord.ext import commands
 from discord import app_commands
 
 from database import db
-from config import Config
 from services.event_engine import EventEngine
+from config import Config
 
 
-# =======================================================
+# =========================================================
 # SETUP COG
-# =======================================================
+# =========================================================
 
 class Setup(commands.Cog):
 
@@ -25,148 +27,92 @@ class Setup(commands.Cog):
         self.bot = bot
 
     # =====================================================
-    # AUTO SETUP ON GUILD JOIN
+    # AUTO SETUP ON JOIN
     # =====================================================
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild):
 
         channel = next(
-            (c for c in guild.text_channels
-             if c.permissions_for(guild.me).send_messages),
+            (c for c in guild.text_channels if c.permissions_for(guild.me).send_messages),
             None
         )
 
         if not channel:
             return
 
-        # -------------------------------------------------
-        # INIT SERVER CONFIG
-        # -------------------------------------------------
-
+        # Ensure DB row exists
         await db.set_server_config(guild_id=guild.id)
 
-        # -------------------------------------------------
-        # DETERMINE CURRENT EVENT STATE (CRITICAL FIX)
-        # -------------------------------------------------
-
-        current_event = await EventEngine.get_current_event(guild.id)
-
-        # If server joins mid-week (Sat/Sun), DO NOT reset blindly
-        # Keep DB state consistent
-        if current_event not in [Config.SVS, Config.KE]:
-            current_event = Config.SVS
-
-        await EventEngine.set_event(guild.id, current_event)
-
-        # -------------------------------------------------
-        # START SETUP FLOW
-        # -------------------------------------------------
+        # Ensure event state exists (IMPORTANT FIX)
+        await EventEngine.ensure_guild_state(guild.id)
 
         embed = discord.Embed(
             title="🛡️ Evony Shield Watch Setup",
             description=(
-                "Welcome to Shield Watch.\n\n"
-                f"Detected current event cycle: **{current_event.upper()}**\n\n"
-                "**Step 1:** Choose your 🫧 Bubble Channel"
+                "Welcome! Let's configure your server.\n\n"
+                "Step 1: Select bubble channel\n"
+                "Step 2: Select battlefield channel\n"
+                "Step 3: Confirm event system sync\n\n"
+                "Click below to begin setup."
             ),
             color=0x1abc9c
         )
 
-        await channel.send(embed=embed, view=BubbleStepView())
-
+        await channel.send(embed=embed, view=SetupView())
 
     # =====================================================
     # MANUAL SETUP COMMAND
     # =====================================================
 
-    @app_commands.command(name="setup", description="Manual setup wizard")
+    @app_commands.command(name="setup", description="Run setup wizard")
     @app_commands.checks.has_permissions(administrator=True)
     async def setup(self, interaction: discord.Interaction):
 
-        await db.set_server_config(guild_id=interaction.guild_id)
+        if not interaction.guild:
+            return await interaction.response.send_message(
+                "❌ Guild only command.",
+                ephemeral=True
+            )
 
-        current_event = await EventEngine.get_current_event(interaction.guild_id)
+        await db.set_server_config(guild_id=interaction.guild_id)
+        await EventEngine.ensure_guild_state(interaction.guild_id)
 
         embed = discord.Embed(
-            title="🛡️ Manual Setup",
-            description=(
-                f"Detected event: **{current_event.upper()}**\n\n"
-                "Configure your server below."
-            ),
+            title="🛡️ Setup Wizard",
+            description="Click below to configure your server.",
             color=0x1abc9c
         )
 
         await interaction.response.send_message(
             embed=embed,
-            view=BubbleStepView(),
+            view=SetupView(),
             ephemeral=True
         )
 
 
-# =======================================================
-# STEP 1 - BUBBLE CHANNEL
-# =======================================================
+# =========================================================
+# MAIN SETUP VIEW
+# =========================================================
 
-class BubbleStepView(discord.ui.View):
+class SetupView(discord.ui.View):
 
     def __init__(self):
         super().__init__(timeout=300)
 
-    @discord.ui.button(
-        label="Use Existing Channel",
-        style=discord.ButtonStyle.secondary,
-        emoji="📋"
-    )
-    async def existing(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="Start Setup", style=discord.ButtonStyle.primary, emoji="🛠️")
+    async def start(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         await interaction.response.send_message(
             "Select bubble channel:",
-            view=ChannelSelectView(step="bubble"),
-            ephemeral=True
-        )
-
-    @discord.ui.button(
-        label="Create Channel",
-        style=discord.ButtonStyle.primary,
-        emoji="🫧"
-    )
-    async def create(self, interaction: discord.Interaction, button: discord.ui.Button):
-
-        guild = interaction.guild
-
-        existing = discord.utils.get(
-            guild.text_channels,
-            name=Config.DEFAULT_BUBBLE_CHANNEL
-        )
-
-        if not existing:
-
-            overwrites = {
-                guild.default_role: discord.PermissionOverwrite(send_messages=False),
-                guild.me: discord.PermissionOverwrite(send_messages=True),
-            }
-
-            existing = await guild.create_text_channel(
-                Config.DEFAULT_BUBBLE_CHANNEL,
-                overwrites=overwrites,
-                topic="Shield Watch Bubble Alerts"
-            )
-
-        await db.set_server_config(
-            guild_id=guild.id,
-            bubble_channel_id=existing.id
-        )
-
-        await interaction.response.send_message(
-            f"✅ Bubble channel set: {existing.mention}",
+            view=ChannelSelectView("bubble"),
             ephemeral=True
         )
 
 
-# =======================================================
-# CHANNEL SELECT
-# =======================================================
+# =========================================================
+# CHANNEL SELECTOR
+# =========================================================
 
 class ChannelSelectView(discord.ui.View):
 
@@ -191,19 +137,31 @@ class ChannelSelect(discord.ui.ChannelSelect):
                 bubble_channel_id=channel.id
             )
 
+            next_view = ChannelSelectView("battlefield")
+
+            await interaction.response.send_message(
+                f"✅ Bubble set: {channel.mention}\nNow select battlefield channel:",
+                view=next_view,
+                ephemeral=True
+            )
+
         elif self.step == "battlefield":
             await db.set_server_config(
                 guild_id=interaction.guild_id,
                 battlefield_channel_id=channel.id
             )
 
-        await interaction.response.send_message(
-            f"✅ Set: {channel.mention}",
-            ephemeral=True
-        )
+            await EventEngine.ensure_guild_state(interaction.guild_id)
+
+            await interaction.response.send_message(
+                f"✅ Battlefield set: {channel.mention}\n\n🛡️ Setup complete.",
+                ephemeral=True
+            )
 
 
-# =======================================================
-# STEP OBJECTS IMPORT SAFE PLACEHOLDER
-# (battlefield + event step remain unchanged for now)
-# =======================================================
+# =========================================================
+# SETUP COG LOADER
+# =========================================================
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Setup(bot))
