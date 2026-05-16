@@ -10,10 +10,8 @@ import discord
 from discord.ext import commands
 from datetime import datetime
 
-from config import Config
 from database import db
 from utils.time_utils import get_user_local_reset_time, format_local_time
-from utils.embeds import Embeds
 
 
 class Reminders(commands.Cog):
@@ -39,9 +37,9 @@ class Reminders(commands.Cog):
         user = self.bot.get_user(user_id)
 
         # =================================================
-        # DISCORD DM
+        # DISCORD DM (STRICT OPT-IN CHECK FIXED)
         # =================================================
-        if user and contact.get("opt_in", 1):
+        if user and contact.get("opt_in") == 1:
 
             try:
 
@@ -59,7 +57,7 @@ class Reminders(commands.Cog):
                 pass
 
         # =================================================
-        # TELEGRAM (NEW QUEUE SYSTEM ONLY)
+        # TELEGRAM (SAFE OPTIONAL LAYER)
         # =================================================
         if telegram_service and contact.get("telegram_id"):
 
@@ -73,13 +71,13 @@ class Reminders(commands.Cog):
 
                 results["telegram"] = bool(sent)
 
-            except Exception as e:
-                print(f"Telegram notify error: {e}")
+            except Exception:
+                pass
 
         return results
 
     # =====================================================
-    # MY TIME COMMAND
+    # MY TIME
     # =====================================================
 
     @commands.hybrid_command(name="mytime")
@@ -103,7 +101,7 @@ class Reminders(commands.Cog):
         await ctx.send(embed=embed)
 
     # =====================================================
-    # TIMEZONE SET
+    # SET TIMEZONE
     # =====================================================
 
     @commands.hybrid_command(name="settimezone")
@@ -122,7 +120,6 @@ class Reminders(commands.Cog):
             await ctx.send(f"✅ Timezone set to **{timezone}**")
 
         except pytz.UnknownTimeZoneError:
-
             await ctx.send("❌ Invalid timezone (e.g. Europe/London, Asia/Tokyo)")
 
     # =====================================================
@@ -154,7 +151,7 @@ class Reminders(commands.Cog):
         await ctx.send("🔔 Notifications enabled.")
 
     # =====================================================
-    # TEST NOTIFICATION
+    # TEST NOTIFY
     # =====================================================
 
     @commands.hybrid_command(name="testnotify")
