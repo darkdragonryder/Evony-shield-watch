@@ -1,41 +1,22 @@
 """
-=========================================================
- Evony Shield Watch
- Reminders System
- Discord + Telegram Notifications
-=========================================================
+Evony Shield Watch
+Reminders System (FULLY ALIGNED WITH WEEK TOGGLE SYSTEM)
 """
 
-# =========================================================
-# IMPORTS
-# =========================================================
-
 import discord
-import aiohttp
-import pytz
-
-from datetime import datetime, UTC
-
 from discord.ext import commands
-from discord import app_commands
+import aiohttp
+from datetime import datetime
 
-from config import Config
 from database import db
+from config import Config
+from utils.time_utils import get_user_local_reset_time, format_local_time
+from utils.embeds import Embeds
 
-from utils.time_utils import (
-    get_user_local_reset_time,
-    format_local_time
-)
-
-
-# =========================================================
-# REMINDERS COG
-# =========================================================
 
 class Reminders(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
-
         self.bot = bot
         self.session = aiohttp.ClientSession()
 
@@ -43,124 +24,94 @@ class Reminders(commands.Cog):
     # CLEANUP
     # =====================================================
 
-    async def cog_unload(self):
+    def cog_unload(self):
+        self.bot.loop.create_task(self.session.close())
 
-        if not self.session.closed:
-            await self.session.close()
+    # =====================================================
+    # GET CURRENT EVENT (SOURCE OF TRUTH)
+    # =====================================================
+
+    async def get_event(self, guild_id: int) -> str:
+        config = await db.get_server_config(guild_id)
+        if not config:
+            return Config.SVS
+
+        toggle = config.get("event_week_toggle", 0)
+        return Config.SVS if toggle == 1 else Config.KE
+
+    # =====================================================
+    # DISCORD DM SENDER
+    # =====================================================
+
+    async def _send_discord(self, user: discord.User, embed: discord.Embed):
+        try:
+            await user.send(embed=embed)
+            return True
+        except:
+            return False
 
     # =====================================================
     # TELEGRAM SENDER
     # =====================================================
 
-    async def _send_telegram(
-        self,
-        telegram_id: str,
-        message: str,
-        title: str
-    ) -> bool:
+    async def _send_telegram(self, telegram_id: str, message: str, title: str):
 
         if not Config.TELEGRAM_BOT_TOKEN:
             return False
 
         try:
-
-            url = (
-                f"https://api.telegram.org/bot"
-                f"{Config.TELEGRAM_BOT_TOKEN}/sendMessage"
-            )
+            url = f"https://api.telegram.org/bot{Config.TELEGRAM_BOT_TOKEN}/sendMessage"
 
             payload = {
                 "chat_id": telegram_id,
-                "text": (
-                    f"🛡️ <b>{title}</b>\n\n"
-                    f"{message}"
-                ),
+                "text": f"🛡️ {title}\n\n{message}",
                 "parse_mode": "HTML"
             }
 
-            async with self.session.post(
-                url,
-                data=payload
-            ) as response:
+            async with self.session.post(url, data=payload) as resp:
+                return resp.status == 200
 
-                return response.status == 200
-
-        except Exception as e:
-
-            print(f"[Telegram ERROR] {e}")
+        except Exception:
             return False
 
     # =====================================================
     # MAIN NOTIFICATION ENGINE
     # =====================================================
 
-    async def notify_member(
-        self,
-        user_id: int,
-        message: str,
-        title: str = "Evony Alert"
-    ):
+    async def notify_member(self, user_id: int, message: str, title: str = "Evony Alert"):
 
         contact = await db.get_member_contact(user_id)
-
         if not contact:
-            return {
-                "discord": False,
-                "telegram": False
-            }
+            return
 
         results = {
             "discord": False,
             "telegram": False
         }
 
-        # =================================================
-        # DISCORD DM
-        # =================================================
+        user = self.bot.get_user(user_id)
 
-        discord_enabled = contact.get(
-            "discord_opt_in",
-            1
-        )
+        # -------------------------------------------------
+        # DISCORD
+        # -------------------------------------------------
+        if user and contact.get("opt_in", 1):
 
-        if discord_enabled:
+            embed = discord.Embed(
+                title=title,
+                description=message,
+                color=0xFF0000,
+                timestamp=datetime.utcnow()
+            )
 
-            try:
+            results["discord"] = await self._send_discord(user, embed)
 
-                user = self.bot.get_user(user_id)
-
-                if not user:
-                    user = await self.bot.fetch_user(user_id)
-
-                embed = discord.Embed(
-                    title=title,
-                    description=message,
-                    color=0xE74C3C,
-                    timestamp=datetime.now(UTC)
-                )
-
-                embed.set_footer(
-                    text="Evony Shield Watch"
-                )
-
-                await user.send(embed=embed)
-
-                results["discord"] = True
-
-            except Exception as e:
-
-                print(f"[Discord DM ERROR] {e}")
-
-        # =================================================
+        # -------------------------------------------------
         # TELEGRAM
-        # =================================================
-
-        telegram_id = contact.get("telegram_id")
-
-        if telegram_id:
+        # -------------------------------------------------
+        if contact.get("telegram_id"):
 
             results["telegram"] = await self._send_telegram(
-                telegram_id,
+                contact["telegram_id"],
                 message,
                 title
             )
@@ -168,190 +119,90 @@ class Reminders(commands.Cog):
         return results
 
     # =====================================================
-    # MY TIME
+    # SVS 39 MIN WARNING (PURGE PHASE)
     # =====================================================
 
-    @app_commands.command(
-        name="mytime",
-        description="Check your local server reset time"
-    )
-    async def mytime(
-        self,
-        interaction: discord.Interaction
-    ):
+    async def svs_purge_warning(self):
 
-        contact = await db.get_member_contact(
-            interaction.user.id
-        )
+        for guild in self.bot.guilds:
 
-        timezone = "UTC"
+            event = await self.get_event(guild.id)
+            if event != Config.SVS:
+                continue
 
-        if contact:
-            timezone = contact.get(
-                "timezone",
-                "UTC"
-            )
+            config = await db.get_server_config(guild.id)
+            if not config:
+                continue
 
-        local_time = get_user_local_reset_time(
-            timezone
-        )
+            channel = guild.get_channel(config.get("bubble_channel_id", 0))
+            if not channel:
+                continue
 
-        formatted = format_local_time(local_time)
+            embed = Embeds.shield_alert(Config.SVS, is_purge=True)
+            await channel.send("@everyone", embed=embed)
 
-        embed = discord.Embed(
-            title="⏰ Your Local Reset Time",
-            description=(
-                "Server reset converts to:\n\n"
-                f"**{formatted}**"
-            ),
-            color=0x3498db
-        )
+            # optional mass DM (safe loop)
+            for member in guild.members:
+                if member.bot:
+                    continue
 
-        embed.add_field(
-            name="🌍 Timezone",
-            value=timezone,
-            inline=False
-        )
+                contact = await db.get_member_contact(member.id)
+                if not contact:
+                    continue
 
-        await interaction.response.send_message(
-            embed=embed,
-            ephemeral=True
-        )
+                if contact.get("opt_in", 1):
+                    local = get_user_local_reset_time(contact.get("timezone", "UTC"))
+                    msg = f"Purge incoming. Local time: {format_local_time(local)}"
+
+                    await self.notify_member(
+                        member.id,
+                        msg,
+                        "SVS PURGE WARNING"
+                    )
 
     # =====================================================
-    # SET TIMEZONE
+    # 1 HOUR WARNING (ALL EVENTS)
     # =====================================================
 
-    @app_commands.command(
-        name="settimezone",
-        description="Set your timezone"
-    )
-    async def settimezone(
-        self,
-        interaction: discord.Interaction,
-        timezone: str
-    ):
+    async def hour_warning(self):
 
-        try:
+        for guild in self.bot.guilds:
 
-            pytz.timezone(timezone)
+            event = await self.get_event(guild.id)
 
-            await db.set_member_contact(
-                interaction.user.id,
-                timezone=timezone
-            )
+            config = await db.get_server_config(guild.id)
+            if not config:
+                continue
 
-            await interaction.response.send_message(
-                f"✅ Timezone set to **{timezone}**",
-                ephemeral=True
-            )
+            channel = guild.get_channel(config.get("bubble_channel_id", 0))
+            if not channel:
+                continue
 
-        except pytz.UnknownTimeZoneError:
-
-            await interaction.response.send_message(
-                (
-                    "❌ Invalid timezone.\n\n"
-                    "Example:\n"
-                    "`Australia/Sydney`\n"
-                    "`Europe/London`\n"
-                    "`America/New_York`"
-                ),
-                ephemeral=True
-            )
+            embed = Embeds.shield_alert(event, is_purge=False)
+            await channel.send("@everyone", embed=embed)
 
     # =====================================================
-    # OPT OUT
+    # RESET START MESSAGE
     # =====================================================
 
-    @app_commands.command(
-        name="optout",
-        description="Disable Discord notifications"
-    )
-    async def optout(
-        self,
-        interaction: discord.Interaction
-    ):
+    async def reset_start(self):
 
-        await db.set_member_contact(
-            interaction.user.id,
-            discord_opt_in=0
-        )
+        for guild in self.bot.guilds:
 
-        await interaction.response.send_message(
-            "🔕 Discord notifications disabled.",
-            ephemeral=True
-        )
+            event = await self.get_event(guild.id)
+
+            config = await db.get_server_config(guild.id)
+            if not config:
+                continue
+
+            battlefield = guild.get_channel(config.get("battlefield_channel_id", 0))
+            if battlefield:
+                embed = Embeds.event_start_notice(event)
+                await battlefield.send("@everyone", embed=embed)
 
     # =====================================================
-    # OPT IN
+    # SETUP
     # =====================================================
-
-    @app_commands.command(
-        name="optin",
-        description="Enable Discord notifications"
-    )
-    async def optin(
-        self,
-        interaction: discord.Interaction
-    ):
-
-        await db.set_member_contact(
-            interaction.user.id,
-            discord_opt_in=1
-        )
-
-        await interaction.response.send_message(
-            "🔔 Discord notifications enabled.",
-            ephemeral=True
-        )
-
-    # =====================================================
-    # TEST NOTIFICATION
-    # =====================================================
-
-    @app_commands.command(
-        name="testnotify",
-        description="Test notifications"
-    )
-    @app_commands.checks.has_permissions(
-        administrator=True
-    )
-    async def testnotify(
-        self,
-        interaction: discord.Interaction,
-        user: discord.Member
-    ):
-
-        await interaction.response.defer(
-            ephemeral=True
-        )
-
-        results = await self.notify_member(
-            user.id,
-            (
-                "This is a test notification from "
-                "Evony Shield Watch."
-            ),
-            "🧪 Test Alert"
-        )
-
-        message = (
-            f"📨 Discord: "
-            f"{'✅' if results['discord'] else '❌'}\n"
-            f"📲 Telegram: "
-            f"{'✅' if results['telegram'] else '❌'}"
-        )
-
-        await interaction.followup.send(
-            message,
-            ephemeral=True
-        )
-
-
-# =========================================================
-# SETUP
-# =========================================================
 
 async def setup(bot: commands.Bot):
-
     await bot.add_cog(Reminders(bot))
