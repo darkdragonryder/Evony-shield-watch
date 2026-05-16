@@ -1,6 +1,6 @@
 """
 Evony Shield Watch
-Role Service (Single Source of Truth - FIXED)
+Role Service (FIXED - DB CONSISTENT)
 """
 
 from database import db
@@ -22,20 +22,15 @@ class RoleService:
         return user.get("role", "member")
 
     # =====================================================
-    # SET ROLE
+    # SET ROLE (FIXED PROPER DB USAGE)
     # =====================================================
 
     async def set_role(self, discord_id: int, role: str):
 
-        async with db.db_path and __import__("aiosqlite").connect(db.db_path) as conn:
-
-            await conn.execute("""
-                UPDATE members
-                SET role = ?
-                WHERE user_id = ?
-            """, (role, discord_id))
-
-            await conn.commit()
+        await db.set_member_contact(
+            discord_id,
+            role=role
+        )
 
     # =====================================================
     # PERMISSION CHECKS
