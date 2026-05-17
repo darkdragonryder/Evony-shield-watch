@@ -1,77 +1,100 @@
 # 🛡️ Evony Shield Watch
 
-Discord bot for **Evony: Return of the King** alliance management.  
-Automated bubble reminders, SVS/KE rotation, custom event creation (BOC/BOG/AllStars/Battlefield), and member check-ins.
+Discord bot for **Evony: Return of the King** alliance management.
 
-## Features
+Automates:
+- SVS / KE event rotation
+- Shield warnings and purge alerts
+- Custom alliance events (BOC / BOG / AllStars / Battlefield)
+- Member onboarding + opt-in tracking
+- Discord + Telegram notification system
+
+---
+
+## 🚀 Features
 
 | Feature | Description |
-|---------|-------------|
-| **Auto SVS/KE** | Alternates weekly, starts Friday 5pm your time |
-| **1h39m SVS Alert** | First warning before purge attack |
-| **1h SVS Alert** | Purge attack + final bubble warning |
-| **1h KE Alert** | Single reminder for Kill Event |
-| **Local Time PMs** | Each member gets their timezone-converted time |
-| **🫧bubble🫧 Channel** | All shield messages go here |
-| **Battlefield Channel** | Event rosters, times, player lists |
-| **Custom Events** | Coordinators create BOC/BOG/AllStars/BF |
-| **Check-in System** | ✅/❌ reactions with cutoff times |
-| **Auto Cleanup** | Events delete 10 mins after end |
-| **SMS/Pushover** | External notifications (optional) |
+|--------|-------------|
+| 🔄 SVS / KE Engine | Automatic weekly rotation system |
+| ⚠️ SVS Alerts | 1h39m purge + 1h warning system |
+| ⚔️ KE Alerts | Combat activation + shield reminders |
+| 🌍 Timezone System | Member-local reset time conversion |
+| 📲 Telegram Linking | Optional Telegram alert bridge |
+| 🛡️ Opt-In System | Members control notifications |
+| 🧭 Role System | Member / Coordinator / Admin / Owner |
+| 📋 Custom Events | Create BOC / BOG / AllStars / Battlefield |
+| ✅ Check-in System | Reaction-based participation tracking |
+| 🧹 Auto Cleanup | Events expire after completion |
 
-## Channel Routing
+---
 
-| Channel Type | What Goes There |
-|-------------|-----------------|
-| **🫧bubble🫧** | Shield up reminders, purge attack warnings, all bubble-related alerts |
-| **battlefield-messages** | Event rosters, player lists, start/end times, BOC/BOG/AllStars/Battlefield announcements |
+## 📡 Notification System
 
-## Slash Commands
+### Discord Alerts
+- SVS / KE war alerts
+- Custom event announcements
+- Admin broadcasts
+- Event rosters & check-ins
 
-### Setup (Admin)
-- `/setup` - Interactive server setup
-- `/setbubble [#channel]` - Set/create bubble channel
-- `/setbattlefield [#channel]` - Set/create battlefield channel
-- `/setcoordinator @role` - Set event coordinator role
-- `/addeventcoord @user` - Give coordinator role
+### Telegram Alerts (Optional)
+- Linked via `/linktelegram`
+- Token-based secure pairing
+- Opt-in required per user
+- Safe fallback (system still works without it)
 
-### Events (Coordinator)
-- `/event_create` - Create custom event (modal popup)
-- `/event_cancel <id>` - Cancel event
-- `/event_list` - Active events
-- `/event_roster <id>` - Show confirmed players
+---
 
-### Admin
-- `/forceevent <svs/ke>` - Override current event
-- `/contact @user phone <number>` - Set SMS
-- `/contact @user pushover <key>` - Set push notifications
-- `/broadcast <message>` - DM all members
-- `/stats` - Server stats
+## 🧠 Smart Safety Logic
 
-### Personal
-- `/mytime` - Your local reset time
-- `/settimezone <timezone>` - Set your timezone
-- `/optout` / `/optin` - Control notifications
+### SVS (Server War)
+- ❌ Relics are NOT safe  
+- ❌ Tiles are NOT safe  
+- ❌ Arctic Barbarians are NOT safe  
+- ❌ Pyramid events are NOT safe  
+- ⚠️ Assume all PvE zones are dangerous  
 
-## Deployment
+### KE (Kill Event)
+- 🛡️ Bubble up if not fighting  
+- ✅ Relics are safe  
+- ✅ Tiles are safe  
+- ✅ Barbarians are safe  
+- ✅ Pyramid events are safe  
 
-### Oracle Cloud Free Tier
+---
 
-```bash
-# Clone repo
-git clone https://github.com/YOUR_USERNAME/evony-shield-watch.git
-cd evony-shield-watch
+## 🧾 Slash Commands
 
-# Run setup script
-chmod +x systemd-service.sh
-./systemd-service.sh
+### ⚙️ Setup (Admin)
+- `/setup` – Server configuration wizard
+- `/setbubble #channel`
+- `/setbattlefield #channel`
+- `/setcoordinator @role`
 
-# Edit .env
-nano .env
+---
 
-# Start bot
-sudo systemctl start evony-shield-watch
-sudo systemctl enable evony-shield-watch
+### ⚔️ Events (Coordinator)
+- `/event_create`
+- `/event_cancel <id>`
+- `/event_list`
+- `/event_roster <id>`
 
-# View logs
-sudo journalctl -u evony-shield-watch -f
+---
+
+### 🛡️ Admin
+- `/forceevent svs|ke`
+- `/broadcast <message>`
+- `/stats`
+
+---
+
+### 👤 Personal
+- `/mytime`
+- `/settimezone <timezone>`
+- `/optin`
+- `/optout`
+- `/linktelegram`
+- `/unlinktelegram`
+
+---
+
+## 🏗️ Architecture
